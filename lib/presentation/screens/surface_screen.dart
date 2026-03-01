@@ -202,11 +202,9 @@ class _SurfaceScreenState extends ConsumerState<SurfaceScreen> {
           : Column(
               children: [
                 Expanded(
-                  child: QuillEditor(
+                  child: QuillEditor.basic(
                     controller: _quillController,
-                    focusNode: FocusNode(),
-                    scrollController: ScrollController(),
-                    configurations: const QuillEditorConfigurations(
+                    config: const QuillEditorConfig(
                       padding: EdgeInsets.all(16),
                       autoFocus: false,
                     ),

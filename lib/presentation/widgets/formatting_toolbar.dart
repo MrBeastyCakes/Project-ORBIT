@@ -22,7 +22,7 @@ class FormattingToolbar extends StatelessWidget {
       ),
       child: QuillSimpleToolbar(
         controller: controller,
-        configurations: const QuillSimpleToolbarConfigurations(
+        config: const QuillSimpleToolbarConfig(
           showFontFamily: false,
           showFontSize: false,
           showBackgroundColorButton: false,
