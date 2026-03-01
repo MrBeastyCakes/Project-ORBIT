@@ -1,0 +1,152 @@
+PROJECT ORBIT — Open Questions
+Fill in your answers below each question. Write "skip" to defer a decision.
+
+=====================================
+1. PLATFORM & LAUNCH
+=====================================
+
+1a. Which platform(s) do you want to target first?
+    (e.g., Android only, iOS + Android, web first, all at once)
+Answer:
+
+1b. Is there a target launch milestone or deadline?
+Answer: android and ios first
+
+=====================================
+2. USER ACCOUNTS & AUTH
+=====================================
+
+2a. How do users sign in? (e.g., email/password, Google, Apple, anonymous/local-only to start)
+Answer:
+
+2b. Should the app work without an account (local-only mode)?
+Answer:users will sign in with google auth but that will be local unless they pay for sync.
+
+=====================================
+3. OFFLINE & SYNC
+=====================================
+
+3a. Should notes be usable offline and sync when back online?
+Answer:
+
+3b. If a user edits the same note on two devices while offline, how should conflicts resolve?
+    (e.g., last-write-wins, manual merge, keep both versions)
+Answer: manually approved merge. with option to split the planet.
+
+=====================================
+4. THE EDITOR (PLANET SURFACE)
+=====================================
+
+4a. What kind of text editing do you want inside a note?
+    (e.g., plain text, rich text / formatting toolbar, markdown, block-based like Notion)
+Answer: rich text with formatting toolbar
+
+4b. Should notes support embedded media? (images, files, audio, drawings)
+Answer: not for version 1
+
+4c. Is there a maximum note size or length you want to enforce?
+Answer: yes. just target something reasonable.
+
+=====================================
+5. HIERARCHY & LIMITS
+=====================================
+
+5a. Can Black Holes contain other Black Holes (nested top-level categories)?
+Answer: not for 1.0
+
+5b. Is there a max depth to the hierarchy? (Black Hole → Star → Planet → ?)
+Answer: stick to what we've explained so far
+
+5c. Does a new user start with any default structure, or a completely empty galaxy?
+Answer:empty galaxy 
+
+=====================================
+6. PHYSICS & PERFORMANCE
+=====================================
+
+6a. How accurate should the orbital physics feel?
+    (e.g., realistic Kepler orbits, simplified circular orbits, gentle floating/drifting)
+Answer: simplified circular
+
+6b. What's a realistic upper bound on how many notes a power user might have?
+    (e.g., 50, 500, 5000 — this affects physics/rendering budget)
+Answer:500
+
+6c. Should users be able to manually drag and pin celestial bodies to fixed positions,
+    or must everything follow physics at all times?
+Answer:follow physics but dragging planets to new sub categories and sub categories to categories should be possible. 
+
+=====================================
+7. COLLABORATION & SHARING
+=====================================
+
+7a. Is collaboration planned for v1 or a future release?
+Answer: maybe future release. not 1.0
+
+7b. If included, what level of sharing?
+    (e.g., read-only link, real-time co-editing, per-planet permissions)
+Answer:
+
+=====================================
+8. SEARCH & NAVIGATION
+=====================================
+
+8a. Should Telescope View (search) support full-text search inside note content,
+    or just match titles?
+Answer:full search text
+
+8b. Are Wormholes user-created only, or should the app auto-suggest them
+    based on linked/related content?
+Answer:for 1.0 just manually created
+
+=====================================
+9. VISUAL DESIGN
+=====================================
+
+9a. Is the app always dark-themed (space background), or should there be a light mode?
+Answer: 1.0 will be dark
+
+9b. Should users be able to customize the appearance of their celestial bodies
+    (e.g., pick planet colors, textures)?
+Answer:yes
+
+9c. Any specific visual references or games that capture the aesthetic you want?
+    (e.g., a specific art style, a game like Osmos, Stellaris, etc.)
+Answer: not for 1.0 just simple colors 
+
+=====================================
+10. NOTIFICATIONS & TIME
+=====================================
+
+10a. Should notes support due dates or reminders?
+Answer:no
+
+10b. If yes, how should reminders appear? (push notification, visual change on the planet, both)
+Answer:no
+
+=====================================
+11. DATA & PRIVACY
+=====================================
+
+11a. Should users be able to export their notes? (e.g., as markdown, PDF, JSON)
+Answer:not in 1.0
+
+11b. Should users be able to import notes from other apps?
+Answer: just copy paste
+
+=====================================
+12. MONETIZATION
+=====================================
+
+12a. What's the planned model? (free, freemium with limits, one-time purchase, subscription)
+Answer: free for local but paid for collaboration
+
+12b. If freemium, what would be gated? (e.g., number of Black Holes, collaboration, themes)
+Answer: number of main categories will be gated at 2, collaboration,
+
+=====================================
+13. ANYTHING ELSE
+=====================================
+
+Anything not covered above that you already have opinions on:
+Answer:
