@@ -39,7 +39,7 @@ class PlanetModel extends HiveObject {
   final DateTime? lastOpenedAt;
 
   @HiveField(11)
-  final int visualState; // stored as int
+  final String visualState; // stored as string name
 
   @HiveField(12)
   final DateTime createdAt;
@@ -77,7 +77,7 @@ class PlanetModel extends HiveObject {
       color: entity.color,
       wordCount: entity.wordCount,
       lastOpenedAt: entity.lastOpenedAt,
-      visualState: entity.visualState.index,
+      visualState: entity.visualState.name,
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
     );
@@ -96,7 +96,10 @@ class PlanetModel extends HiveObject {
       color: color,
       wordCount: wordCount,
       lastOpenedAt: lastOpenedAt,
-      visualState: PlanetVisualState.values[visualState],
+      visualState: PlanetVisualState.values.firstWhere(
+        (e) => e.name == visualState,
+        orElse: () => PlanetVisualState.normal,
+      ),
       createdAt: createdAt,
       updatedAt: updatedAt,
     );

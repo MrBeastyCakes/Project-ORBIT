@@ -11,5 +11,5 @@ class SignInWithGoogle extends UseCase<UserProfile?, NoParams> {
 
   @override
   Future<Either<Failure, UserProfile?>> call(NoParams params) =>
-      repository.getCurrentFirebaseUser();
+      repository.signInWithGoogle();
 }

@@ -85,10 +85,10 @@ class TidalLockSystem extends Component {
 
       // Move the dragged planet.
       final compA = galaxy.getPlanet(pair.planetAId);
-      final compB = galaxy.getPlanet(pair.planetBId);
 
-      compA?.position.add(isA ? delta : delta);
-      compB?.position.add(isB ? delta : delta);
+      // Always move planet A (the anchor), since update() enforces B = A + offset.
+      // Dragging either planet in the pair moves A, and B is corrected next frame.
+      compA?.position.add(delta);
     }
   }
 

@@ -191,15 +191,60 @@ class LocalCelestialDatasource {
     }
   }
 
+  // --- Update helpers ---
+
+  Future<void> updateBlackHole(BlackHoleModel model) async {
+    try {
+      await blackHolesBox.put(model.id, model);
+    } catch (e) {
+      throw CacheException('Failed to update black hole: $e');
+    }
+  }
+
+  Future<void> updateStar(StarModel model) async {
+    try {
+      await starsBox.put(model.id, model);
+    } catch (e) {
+      throw CacheException('Failed to update star: $e');
+    }
+  }
+
+  Future<void> updatePlanet(PlanetModel model) async {
+    try {
+      await planetsBox.put(model.id, model);
+    } catch (e) {
+      throw CacheException('Failed to update planet: $e');
+    }
+  }
+
+  Future<void> updateMoon(MoonModel model) async {
+    try {
+      await moonsBox.put(model.id, model);
+    } catch (e) {
+      throw CacheException('Failed to update moon: $e');
+    }
+  }
+
+  Future<void> updateAsteroid(AsteroidModel model) async {
+    try {
+      await asteroidsBox.put(model.id, model);
+    } catch (e) {
+      throw CacheException('Failed to update asteroid: $e');
+    }
+  }
+
   // --- Cascade delete helpers ---
 
   Future<void> deleteStarsForBlackHole(String blackHoleId) async {
     try {
-      final toDelete = starsBox.values
+      final starIds = starsBox.values
           .where((s) => s.parentBlackHoleId == blackHoleId)
           .map((s) => s.id)
           .toList();
-      await starsBox.deleteAll(toDelete);
+      for (final starId in starIds) {
+        await deletePlanetsForStar(starId);
+      }
+      await starsBox.deleteAll(starIds);
     } catch (e) {
       throw CacheException('Failed to cascade delete stars: $e');
     }
@@ -207,11 +252,14 @@ class LocalCelestialDatasource {
 
   Future<void> deletePlanetsForStar(String starId) async {
     try {
-      final toDelete = planetsBox.values
+      final planetIds = planetsBox.values
           .where((p) => p.parentStarId == starId)
           .map((p) => p.id)
           .toList();
-      await planetsBox.deleteAll(toDelete);
+      for (final planetId in planetIds) {
+        await deleteMoonsForPlanet(planetId);
+      }
+      await planetsBox.deleteAll(planetIds);
     } catch (e) {
       throw CacheException('Failed to cascade delete planets: $e');
     }

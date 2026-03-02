@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/entities/planet.dart';
-import '../providers/galaxy_provider.dart';
 import '../providers/navigation_provider.dart';
 import '../providers/search_provider.dart';
 import '../../core/constants/theme_constants.dart';
@@ -41,18 +40,6 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
     Navigator.of(context).pop();
   }
 
-  /// Returns the parent star name for a planet, if found in galaxy state.
-  String? _parentStarName(Planet planet) {
-    final galaxyState = ref.read(galaxyProvider);
-    try {
-      return galaxyState.stars
-          .firstWhere((s) => s.id == planet.parentStarId)
-          .name;
-    } catch (_) {
-      return null;
-    }
-  }
-
   @override
   void dispose() {
     _textController.removeListener(_onQueryChanged);
@@ -63,7 +50,7 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
   @override
   Widget build(BuildContext context) {
     final searchState = ref.watch(searchProvider);
-    final resultPlanets = ref.watch(searchResultPlanetsProvider);
+    final resultItems = ref.watch(searchResultItemsProvider);
 
     return GestureDetector(
       onTap: _dismiss,
@@ -84,7 +71,7 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
                     style: const TextStyle(color: ThemeConstants.starColor),
                     cursorColor: ThemeConstants.accentColor,
                     decoration: InputDecoration(
-                      hintText: 'Search across all notes...',
+                      hintText: 'Search notes, planets, stars...',
                       hintStyle: TextStyle(
                         color: ThemeConstants.starColor.withValues(alpha: 0.5),
                       ),
@@ -112,7 +99,7 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
 
                 // Results / empty / loading area
                 Expanded(
-                  child: _buildBody(searchState, resultPlanets),
+                  child: _buildBody(searchState, resultItems),
                 ),
               ],
             ),
@@ -122,7 +109,7 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
     );
   }
 
-  Widget _buildBody(SearchState searchState, List<Planet> resultPlanets) {
+  Widget _buildBody(SearchState searchState, List<SearchResultItem> resultItems) {
     if (searchState.isSearching) {
       return const Center(
         child: CircularProgressIndicator(color: ThemeConstants.accentColor),
@@ -132,11 +119,11 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
     if (searchState.query.isEmpty) {
       return _buildEmptyState(
         icon: Icons.travel_explore,
-        message: 'Type to search across all notes',
+        message: 'Search notes, planet names, or star names',
       );
     }
 
-    if (resultPlanets.isEmpty) {
+    if (resultItems.isEmpty) {
       return _buildEmptyState(
         icon: Icons.search_off,
         message: 'No matching planets found',
@@ -145,14 +132,13 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
 
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      itemCount: resultPlanets.length,
+      itemCount: resultItems.length,
       itemBuilder: (context, index) {
-        final planet = resultPlanets[index];
-        final starName = _parentStarName(planet);
+        final item = resultItems[index];
         return _ResultCard(
-          planet: planet,
-          starName: starName,
-          onTap: () => _onResultTapped(planet),
+          planet: item.planet,
+          snippet: item.snippet,
+          onTap: () => _onResultTapped(item.planet),
         );
       },
     );
@@ -185,12 +171,12 @@ class _TelescopeScreenState extends ConsumerState<TelescopeScreen> {
 
 class _ResultCard extends StatelessWidget {
   final Planet planet;
-  final String? starName;
+  final String? snippet;
   final VoidCallback onTap;
 
   const _ResultCard({
     required this.planet,
-    required this.starName,
+    required this.snippet,
     required this.onTap,
   });
 
@@ -234,13 +220,14 @@ class _ResultCard extends StatelessWidget {
                         fontSize: 15,
                       ),
                     ),
-                    if (starName != null) ...[
-                      const SizedBox(height: 2),
+                    if (snippet != null && snippet!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
                       Text(
-                        'In $starName',
+                        snippet!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: ThemeConstants.starColor
-                              .withValues(alpha: 0.55),
+                          color: ThemeConstants.starColor.withValues(alpha: 0.55),
                           fontSize: 12,
                         ),
                       ),

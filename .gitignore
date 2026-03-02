@@ -44,5 +44,8 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# OMC state (local only)
-.omc/state/
+# Android signing key properties (never commit real keys)
+android/key.properties
+
+# OMC (local tooling state)
+.omc/

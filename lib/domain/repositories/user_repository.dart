@@ -7,4 +7,6 @@ abstract class UserRepository {
   Future<Either<Failure, void>> cacheUser(UserProfile user);
   Future<Either<Failure, void>> signOut();
   Future<Either<Failure, UserProfile?>> getCurrentFirebaseUser();
+  Future<Either<Failure, UserProfile?>> signInWithGoogle();
+  Future<Either<Failure, void>> deleteAccount();
 }

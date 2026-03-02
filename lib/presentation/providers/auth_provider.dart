@@ -53,11 +53,13 @@ class AuthState {
   final UserProfile? user;
   final bool isLoading;
   final Failure? error;
+  final bool choseLocalMode;
 
   const AuthState({
     this.user,
     this.isLoading = false,
     this.error,
+    this.choseLocalMode = false,
   });
 
   bool get isAuthenticated => user != null;
@@ -66,6 +68,7 @@ class AuthState {
     UserProfile? user,
     bool? isLoading,
     Failure? error,
+    bool? choseLocalMode,
     bool clearUser = false,
     bool clearError = false,
   }) {
@@ -73,6 +76,7 @@ class AuthState {
       user: clearUser ? null : (user ?? this.user),
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
+      choseLocalMode: choseLocalMode ?? this.choseLocalMode,
     );
   }
 }
@@ -84,23 +88,26 @@ class AuthState {
 class AuthNotifier extends StateNotifier<AuthState> {
   final UserRepository _repo;
 
-  AuthNotifier(this._repo) : super(const AuthState());
+  // Start with isLoading=true so the auth gate shows a splash while we
+  // check for an existing session, preventing a flash of the auth screen.
+  AuthNotifier(this._repo) : super(const AuthState(isLoading: true));
 
-  /// Attempt Google sign-in. Gracefully falls back on Firebase errors.
+  /// Trigger the real Google Sign-In flow.
   Future<void> signIn() async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final result = await _repo.getCurrentFirebaseUser();
+      final result = await _repo.signInWithGoogle();
       result.fold(
         (failure) => state = state.copyWith(
           isLoading: false,
           error: failure,
         ),
         (user) {
-          if (user != null) {
-            _repo.cacheUser(user);
-          }
-          state = state.copyWith(isLoading: false, user: user);
+          state = state.copyWith(
+            isLoading: false,
+            user: user,
+            // user == null means the dialog was cancelled — not an error
+          );
         },
       );
     } catch (e) {
@@ -119,12 +126,37 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final result = await _repo.signOut();
       result.fold(
         (failure) => state = state.copyWith(isLoading: false, error: failure),
-        (_) => state = state.copyWith(isLoading: false, clearUser: true),
+        (_) => state = state.copyWith(
+          isLoading: false,
+          clearUser: true,
+          choseLocalMode: false,
+        ),
       );
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
         error: AuthFailure('Sign out failed: $e'),
+      );
+    }
+  }
+
+  /// Delete the Firebase account and all local data.
+  Future<void> deleteAccount() async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final result = await _repo.deleteAccount();
+      result.fold(
+        (failure) => state = state.copyWith(isLoading: false, error: failure),
+        (_) => state = state.copyWith(
+          isLoading: false,
+          clearUser: true,
+          choseLocalMode: false,
+        ),
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        error: AuthFailure('Account deletion failed: $e'),
       );
     }
   }
@@ -151,7 +183,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// Continue without signing in (free-tier local-only mode).
   void continueLocally() {
-    state = state.copyWith(isLoading: false, clearUser: true, clearError: true);
+    state = state.copyWith(
+      isLoading: false,
+      clearUser: true,
+      clearError: true,
+      choseLocalMode: true,
+    );
   }
 }
 
@@ -201,5 +238,22 @@ class _LocalOnlyUserRepository implements UserRepository {
   @override
   Future<Either<Failure, UserProfile?>> getCurrentFirebaseUser() async {
     return const Right(null);
+  }
+
+  @override
+  Future<Either<Failure, UserProfile?>> signInWithGoogle() async {
+    // Firebase not available — cannot sign in.
+    return Left(AuthFailure('Firebase is not configured on this device.'));
+  }
+
+  @override
+  Future<Either<Failure, void>> deleteAccount() async {
+    // No Firebase account to delete; just clear local cache.
+    try {
+      await _datasource.clearUser();
+      return const Right(null);
+    } catch (e) {
+      return Left(CacheFailure('$e'));
+    }
   }
 }

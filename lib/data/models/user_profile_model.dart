@@ -18,7 +18,7 @@ class UserProfileModel extends HiveObject {
   final String? photoUrl;
 
   @HiveField(4)
-  final int tier; // stored as int
+  final String tier; // stored as string name
 
   @HiveField(5)
   final DateTime createdAt;
@@ -38,7 +38,7 @@ class UserProfileModel extends HiveObject {
       email: entity.email,
       displayName: entity.displayName,
       photoUrl: entity.photoUrl,
-      tier: entity.tier.index,
+      tier: entity.tier.name,
       createdAt: entity.createdAt,
     );
   }
@@ -49,7 +49,10 @@ class UserProfileModel extends HiveObject {
       email: email,
       displayName: displayName,
       photoUrl: photoUrl,
-      tier: UserTier.values[tier],
+      tier: UserTier.values.firstWhere(
+        (e) => e.name == tier,
+        orElse: () => UserTier.free,
+      ),
       createdAt: createdAt,
     );
   }

@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flame/components.dart';
 import 'package:flutter/painting.dart';
 import 'package:orbit_app/presentation/game/components/black_hole_component.dart';
@@ -15,18 +13,25 @@ class _DragState {
   final DragBodyType type;
   final Vector2 originalPosition;
 
+  /// ID of the body's original parent (star for planets, black hole for stars).
+  final String originalParentId;
+
+  /// ID of the parent currently being targeted (may change during drag).
+  String currentTargetParentId;
+
   _DragState({
     required this.id,
     required this.type,
     required this.originalPosition,
-  });
+    required this.originalParentId,
+  }) : currentTargetParentId = originalParentId;
 }
 
-/// Ghost orbit path rendered around the nearest valid drop target while
-/// dragging.
+/// Ghost orbit path rendered around the current/nearest parent while dragging.
+/// Radius dynamically follows the dragged body's distance from the parent.
 class _GhostOrbitComponent extends Component {
-  static const double _orbitRadius = 80.0;
   Vector2 center;
+  double radius = 80.0;
   bool visible = false;
 
   _GhostOrbitComponent({required this.center});
@@ -34,16 +39,20 @@ class _GhostOrbitComponent extends Component {
   @override
   void render(Canvas canvas) {
     if (!visible) return;
-    final paint = Paint()
-      ..color = const Color(0x44FFFFFF)
+    // Outer glow ring.
+    final glowPaint = Paint()
+      ..color = const Color(0x22FFFFFF)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-    canvas.drawCircle(
-      Offset(center.x, center.y),
-      _orbitRadius,
-      paint,
-    );
+      ..strokeWidth = 6.0
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+    canvas.drawCircle(Offset(center.x, center.y), radius, glowPaint);
+
+    // Crisp orbit line.
+    final paint = Paint()
+      ..color = const Color(0x55FFFFFF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(Offset(center.x, center.y), radius, paint);
   }
 }
 
@@ -93,55 +102,58 @@ class DragSystem extends Component {
     await add(_ghost);
   }
 
+  // ── Callbacks ─────────────────────────────────────────────────────────────
+
+  /// Fired when a body's orbit radius changes (same parent, new distance).
+  void Function(String bodyId, String bodyType, double newRadius)?
+      onOrbitRadiusChanged;
+
   // ── Public API ────────────────────────────────────────────────────────────
 
   bool get isDragging => _active != null;
 
+  /// The parent ID currently targeted during drag (for external reading).
+  String? get currentTargetParentId => _active?.currentTargetParentId;
+
   /// Begin dragging [planetId] from its current world [position].
-  void startDragPlanet(String planetId, Vector2 position) {
+  /// [currentParentId] is the planet's current parent star id.
+  void startDragPlanet(String planetId, Vector2 position, String currentParentId) {
     _active = _DragState(
       id: planetId,
       type: DragBodyType.planet,
       originalPosition: position.clone(),
+      originalParentId: currentParentId,
     );
     _highlightStars(true);
+    // Show ghost orbit immediately at current distance.
+    _updateGhostForPlanet(position);
   }
 
   /// Begin dragging [starId] from its current world [position].
-  void startDragStar(String starId, Vector2 position) {
+  /// [currentParentId] is the star's current parent black hole id.
+  void startDragStar(String starId, Vector2 position, String currentParentId) {
     _active = _DragState(
       id: starId,
       type: DragBodyType.star,
       originalPosition: position.clone(),
+      originalParentId: currentParentId,
     );
     _highlightBlackHoles(true);
+    _updateGhostForStar(position);
   }
 
-  /// Called every frame during drag with the current world [position] of the
-  /// dragged body.  Updates the ghost orbit toward the nearest valid target.
+  /// Called every frame during drag with the current world [position].
+  /// Updates ghost orbit and swaps parent target if a closer valid parent is nearby.
   void updateDrag(Vector2 position) {
     if (_active == null) return;
     if (_active!.type == DragBodyType.planet) {
-      final nearest = _nearestStar(position);
-      if (nearest != null) {
-        _ghost.center = nearest.position.clone();
-        _ghost.visible = true;
-      } else {
-        _ghost.visible = false;
-      }
+      _updateGhostForPlanet(position);
     } else {
-      final nearest = _nearestBlackHole(position);
-      if (nearest != null) {
-        _ghost.center = nearest.position.clone();
-        _ghost.visible = true;
-      } else {
-        _ghost.visible = false;
-      }
+      _updateGhostForStar(position);
     }
   }
 
-  /// Called when the pointer is released at world [position].
-  /// Resolves the drop: reparents or snaps back.
+  /// Resolves the drop: reparents if target changed, otherwise updates orbit radius.
   void endDrag(Vector2 dropPosition) {
     final state = _active;
     if (state == null) return;
@@ -158,7 +170,7 @@ class DragSystem extends Component {
     }
   }
 
-  /// Cancel drag without resolving — snaps body back to original position.
+  /// Cancel drag — snaps body back to original position.
   void cancelDrag() {
     final state = _active;
     if (state == null) return;
@@ -168,11 +180,51 @@ class DragSystem extends Component {
     _highlightBlackHoles(false);
 
     if (state.type == DragBodyType.planet) {
-      final comp = planets[state.id];
-      comp?.position = state.originalPosition.clone();
+      planets[state.id]?.position = state.originalPosition.clone();
     } else {
-      final comp = stars[state.id];
-      comp?.position = state.originalPosition.clone();
+      stars[state.id]?.position = state.originalPosition.clone();
+    }
+  }
+
+  // ── Ghost orbit updates ─────────────────────────────────────────────────
+
+  void _updateGhostForPlanet(Vector2 bodyPos) {
+    final state = _active!;
+    // Find the nearest star. If within snap range, target it; otherwise keep current.
+    final nearest = _nearestStar(bodyPos);
+    if (nearest != null) {
+      final dist = bodyPos.distanceTo(nearest.position);
+      if (dist <= planetSnapRange || nearest.entity.id == state.currentTargetParentId) {
+        state.currentTargetParentId = nearest.entity.id;
+      }
+    }
+    // Show ghost centered on the target parent.
+    final targetStar = stars[state.currentTargetParentId];
+    if (targetStar != null) {
+      _ghost.center = targetStar.position.clone();
+      _ghost.radius = bodyPos.distanceTo(targetStar.position).clamp(30.0, 600.0);
+      _ghost.visible = true;
+    } else {
+      _ghost.visible = false;
+    }
+  }
+
+  void _updateGhostForStar(Vector2 bodyPos) {
+    final state = _active!;
+    final nearest = _nearestBlackHole(bodyPos);
+    if (nearest != null) {
+      final dist = bodyPos.distanceTo(nearest.position);
+      if (dist <= starSnapRange || nearest.entity.id == state.currentTargetParentId) {
+        state.currentTargetParentId = nearest.entity.id;
+      }
+    }
+    final targetBh = blackHoles[state.currentTargetParentId];
+    if (targetBh != null) {
+      _ghost.center = targetBh.position.clone();
+      _ghost.radius = bodyPos.distanceTo(targetBh.position).clamp(60.0, 800.0);
+      _ghost.visible = true;
+    } else {
+      _ghost.visible = false;
     }
   }
 
@@ -182,99 +234,35 @@ class DragSystem extends Component {
     final planetComp = planets[state.id];
     if (planetComp == null) return;
 
-    // Find the nearest star within snap range.
-    StarComponent? best;
-    double bestDist = double.infinity;
-    for (final star in stars.values) {
-      final d = dropPosition.distanceTo(star.position);
-      if (d < bestDist) {
-        bestDist = d;
-        best = star;
-      }
+    final targetStar = stars[state.currentTargetParentId];
+    if (targetStar == null) return;
+
+    final newRadius = dropPosition.distanceTo(targetStar.position).clamp(30.0, 600.0);
+    final reparented = state.currentTargetParentId != state.originalParentId;
+
+    if (reparented) {
+      onReparentPlanet?.call(state.id, state.currentTargetParentId);
     }
 
-    if (best != null && bestDist <= planetSnapRange) {
-      // Check if it's actually a different star.
-      final currentStarId = planetComp.entity.parentStarId;
-      if (best.entity.id != currentStarId) {
-        onReparentPlanet?.call(state.id, best.entity.id);
-        // Smoothly animate to new orbit angle based on drop position.
-        _animatePlanetToOrbit(planetComp, best.position, dropPosition);
-        return;
-      }
-    }
-
-    // Snap back.
-    _animateSnap(planetComp, state.originalPosition);
+    // Always fire orbit radius changed (covers both reparent and same-parent adjust).
+    onOrbitRadiusChanged?.call(state.id, 'planet', newRadius);
   }
 
   void _resolveStarDrop(_DragState state, Vector2 dropPosition) {
     final starComp = stars[state.id];
     if (starComp == null) return;
 
-    BlackHoleComponent? best;
-    double bestDist = double.infinity;
-    for (final bh in blackHoles.values) {
-      final d = dropPosition.distanceTo(bh.position);
-      if (d < bestDist) {
-        bestDist = d;
-        best = bh;
-      }
+    final targetBh = blackHoles[state.currentTargetParentId];
+    if (targetBh == null) return;
+
+    final newRadius = dropPosition.distanceTo(targetBh.position).clamp(60.0, 800.0);
+    final reparented = state.currentTargetParentId != state.originalParentId;
+
+    if (reparented) {
+      onReparentStar?.call(state.id, state.currentTargetParentId);
     }
 
-    if (best != null && bestDist <= starSnapRange) {
-      final currentBhId = starComp.entity.parentBlackHoleId;
-      if (best.entity.id != currentBhId) {
-        onReparentStar?.call(state.id, best.entity.id);
-        _animateStarToOrbit(starComp, best.position, dropPosition);
-        return;
-      }
-    }
-
-    // Snap back.
-    _animateSnap(starComp, state.originalPosition);
-  }
-
-  // ── Orbit angle animation helpers ─────────────────────────────────────────
-
-  /// Moves [comp] toward [targetParentCenter] in an arc based on the angle
-  /// derived from [dropWorldPos].  This is a simple lerp-based approach so
-  /// the body eases into its new orbit position.
-  void _animatePlanetToOrbit(
-    PlanetComponent comp,
-    Vector2 targetParentCenter,
-    Vector2 dropWorldPos,
-  ) {
-    final delta = dropWorldPos - targetParentCenter;
-    final orbitRadius = comp.entity.orbitRadius.clamp(60.0, double.infinity);
-    final angle = math.atan2(delta.y, delta.x);
-    final targetPos = targetParentCenter +
-        Vector2(math.cos(angle) * orbitRadius, math.sin(angle) * orbitRadius);
-    _smoothMove(comp, targetPos, 0.4);
-  }
-
-  void _animateStarToOrbit(
-    StarComponent comp,
-    Vector2 targetParentCenter,
-    Vector2 dropWorldPos,
-  ) {
-    final delta = dropWorldPos - targetParentCenter;
-    final orbitRadius = comp.entity.orbitRadius.clamp(100.0, double.infinity);
-    final angle = math.atan2(delta.y, delta.x);
-    final targetPos = targetParentCenter +
-        Vector2(math.cos(angle) * orbitRadius, math.sin(angle) * orbitRadius);
-    _smoothMove(comp, targetPos, 0.4);
-  }
-
-  void _animateSnap(PositionComponent comp, Vector2 target) {
-    _smoothMove(comp, target, 0.3);
-  }
-
-  /// Schedules a simple lerp move on [comp] toward [target] over [duration]s.
-  void _smoothMove(PositionComponent comp, Vector2 target, double duration) {
-    comp.add(
-      _LerpMoveEffect(target: target.clone(), duration: duration),
-    );
+    onOrbitRadiusChanged?.call(state.id, 'star', newRadius);
   }
 
   // ── Highlight helpers ─────────────────────────────────────────────────────
@@ -320,38 +308,4 @@ class DragSystem extends Component {
   }
 }
 
-// ── Lerp move effect ──────────────────────────────────────────────────────────
 
-/// A simple position lerp effect added as a child of a [PositionComponent].
-class _LerpMoveEffect extends Component {
-  final Vector2 target;
-  final double duration;
-  double _elapsed = 0.0;
-  Vector2? _start;
-
-  _LerpMoveEffect({required this.target, required this.duration});
-
-  @override
-  void onMount() {
-    _start = (parent as PositionComponent).position.clone();
-  }
-
-  @override
-  void update(double dt) {
-    _elapsed += dt;
-    final t = (_elapsed / duration).clamp(0.0, 1.0);
-    final eased = t * t * (3.0 - 2.0 * t); // smoothstep
-    final comp = parent as PositionComponent;
-    comp.position = Vector2(
-      _start!.x + (_start!.x - target.x).abs() > 0.1
-          ? _lerp(_start!.x, target.x, eased)
-          : target.x,
-      _start!.y + (_start!.y - target.y).abs() > 0.1
-          ? _lerp(_start!.y, target.y, eased)
-          : target.y,
-    );
-    if (t >= 1.0) removeFromParent();
-  }
-
-  double _lerp(double a, double b, double t) => a + (b - a) * t;
-}

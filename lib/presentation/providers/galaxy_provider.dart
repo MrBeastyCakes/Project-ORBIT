@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/entities/black_hole.dart';
@@ -6,6 +8,8 @@ import '../../domain/entities/planet.dart';
 import '../../domain/entities/moon.dart';
 import '../../domain/entities/asteroid.dart';
 import '../../domain/repositories/celestial_body_repository.dart';
+import '../../domain/repositories/constellation_repository.dart';
+import '../../domain/repositories/wormhole_repository.dart';
 import '../../core/errors/failures.dart';
 import '../../core/utils/id_generator.dart';
 import 'providers.dart';
@@ -53,8 +57,14 @@ class GalaxyState {
 
 class GalaxyNotifier extends StateNotifier<GalaxyState> {
   final CelestialBodyRepository _repository;
+  final WormholeRepository _wormholeRepository;
+  final ConstellationRepository _constellationRepository;
 
-  GalaxyNotifier(this._repository) : super(const GalaxyState());
+  GalaxyNotifier(
+    this._repository,
+    this._wormholeRepository,
+    this._constellationRepository,
+  ) : super(const GalaxyState());
 
   /// Clears the current error state.
   void clearError() {
@@ -115,11 +125,16 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
   Future<void> addBlackHole(String name) async {
     try {
       final now = DateTime.now();
+      final index = state.blackHoles.length;
+      final angle = index * 2 * math.pi / 6; // max 6 positions in a ring
+      const distance = 500.0; // spacing between black holes
+      final x = distance * math.cos(angle);
+      final y = distance * math.sin(angle);
       final blackHole = BlackHole(
         id: generateId(),
         name: name,
-        x: 0,
-        y: 0,
+        x: x,
+        y: y,
         mass: 1000,
         orbitRadius: 0,
         orbitAngle: 0,
@@ -142,15 +157,25 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
   Future<void> addStar(String name, String blackHoleId) async {
     try {
       final now = DateTime.now();
+      final random = math.Random();
+      final siblingCount =
+          state.stars.where((s) => s.parentBlackHoleId == blackHoleId).length;
+      final orbitRadius = 150.0 + siblingCount * 80.0;
+      final orbitAngle = random.nextDouble() * 360.0;
+      // Compute initial position from parent black hole + orbit params.
+      final parentBh = state.blackHoles.where((bh) => bh.id == blackHoleId).firstOrNull;
+      final angleRad = orbitAngle * math.pi / 180.0;
+      final initialX = (parentBh?.x ?? 0) + orbitRadius * math.cos(angleRad);
+      final initialY = (parentBh?.y ?? 0) + orbitRadius * math.sin(angleRad);
       final star = Star(
         id: generateId(),
         name: name,
-        x: 0,
-        y: 0,
+        x: initialX,
+        y: initialY,
         mass: 500,
         parentBlackHoleId: blackHoleId,
-        orbitRadius: 150,
-        orbitAngle: 0,
+        orbitRadius: orbitRadius,
+        orbitAngle: orbitAngle,
         color: 0xFFFFF8E7,
         createdAt: now,
         updatedAt: now,
@@ -170,15 +195,25 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
   Future<void> addPlanet(String name, String starId) async {
     try {
       final now = DateTime.now();
+      final random = math.Random();
+      final siblingCount =
+          state.planets.where((p) => p.parentStarId == starId).length;
+      final orbitRadius = 80.0 + siblingCount * 50.0;
+      final orbitAngle = random.nextDouble() * 360.0;
+      // Compute initial position from parent star + orbit params.
+      final parentStar = state.stars.where((s) => s.id == starId).firstOrNull;
+      final pAngleRad = orbitAngle * math.pi / 180.0;
+      final initialX = (parentStar?.x ?? 0) + orbitRadius * math.cos(pAngleRad);
+      final initialY = (parentStar?.y ?? 0) + orbitRadius * math.sin(pAngleRad);
       final planet = Planet(
         id: generateId(),
         name: name,
-        x: 0,
-        y: 0,
+        x: initialX,
+        y: initialY,
         mass: 100,
         parentStarId: starId,
-        orbitRadius: 80,
-        orbitAngle: 0,
+        orbitRadius: orbitRadius,
+        orbitAngle: orbitAngle,
         color: 0xFF4A90D9,
         createdAt: now,
         updatedAt: now,
@@ -199,17 +234,12 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
 
   /// Update the color of a celestial body identified by [id] and [bodyType].
   ///
-  /// Because the repository only supports insert/delete (no update), this
-  /// method re-inserts the entity with the new color — matching the same
-  /// pattern used by [reparentBody].
-  ///
   /// [bodyType] should be one of: 'blackHole', 'star', 'planet'.
   Future<void> updateBodyColor(
       String id, String bodyType, int newColor) async {
     switch (bodyType) {
       case 'blackHole':
-        final bh =
-            state.blackHoles.where((b) => b.id == id).firstOrNull;
+        final bh = state.blackHoles.where((b) => b.id == id).firstOrNull;
         if (bh == null) return;
         final updated = BlackHole(
           id: bh.id,
@@ -223,23 +253,16 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
           createdAt: bh.createdAt,
           updatedAt: DateTime.now(),
         );
-        final del = await _repository.deleteBlackHole(id);
-        del.fold((f) { state = state.copyWith(error: f); return; }, (_) async {
-          final ins = await _repository.insertBlackHole(updated);
-          ins.fold(
-            (f) => state = state.copyWith(error: f),
-            (_) => state = state.copyWith(
-              blackHoles: [
-                ...state.blackHoles.where((b) => b.id != id),
-                updated,
-              ],
-            ),
-          );
-        });
+        final result = await _repository.updateBlackHole(updated);
+        result.fold(
+          (f) => state = state.copyWith(error: f),
+          (_) => state = state.copyWith(
+            blackHoles: [...state.blackHoles.where((b) => b.id != id), updated],
+          ),
+        );
 
       case 'star':
-        final star =
-            state.stars.where((s) => s.id == id).firstOrNull;
+        final star = state.stars.where((s) => s.id == id).firstOrNull;
         if (star == null) return;
         final updated = Star(
           id: star.id,
@@ -254,23 +277,16 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
           createdAt: star.createdAt,
           updatedAt: DateTime.now(),
         );
-        final del = await _repository.deleteStar(id);
-        del.fold((f) { state = state.copyWith(error: f); return; }, (_) async {
-          final ins = await _repository.insertStar(updated);
-          ins.fold(
-            (f) => state = state.copyWith(error: f),
-            (_) => state = state.copyWith(
-              stars: [
-                ...state.stars.where((s) => s.id != id),
-                updated,
-              ],
-            ),
-          );
-        });
+        final result = await _repository.updateStar(updated);
+        result.fold(
+          (f) => state = state.copyWith(error: f),
+          (_) => state = state.copyWith(
+            stars: [...state.stars.where((s) => s.id != id), updated],
+          ),
+        );
 
       case 'planet':
-        final planet =
-            state.planets.where((p) => p.id == id).firstOrNull;
+        final planet = state.planets.where((p) => p.id == id).firstOrNull;
         if (planet == null) return;
         final updated = Planet(
           id: planet.id,
@@ -288,19 +304,217 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
           createdAt: planet.createdAt,
           updatedAt: DateTime.now(),
         );
-        final del = await _repository.deletePlanet(id);
-        del.fold((f) { state = state.copyWith(error: f); return; }, (_) async {
-          final ins = await _repository.insertPlanet(updated);
-          ins.fold(
-            (f) => state = state.copyWith(error: f),
-            (_) => state = state.copyWith(
-              planets: [
-                ...state.planets.where((p) => p.id != id),
-                updated,
-              ],
-            ),
-          );
-        });
+        final result = await _repository.updatePlanet(updated);
+        result.fold(
+          (f) => state = state.copyWith(error: f),
+          (_) => state = state.copyWith(
+            planets: [...state.planets.where((p) => p.id != id), updated],
+          ),
+        );
+    }
+  }
+
+  /// Rename a black hole, preserving all other fields.
+  Future<void> renameBlackHole(String id, String newName) async {
+    final bh = state.blackHoles.where((b) => b.id == id).firstOrNull;
+    if (bh == null) return;
+    final updated = BlackHole(
+      id: bh.id,
+      name: newName,
+      x: bh.x,
+      y: bh.y,
+      mass: bh.mass,
+      orbitRadius: bh.orbitRadius,
+      orbitAngle: bh.orbitAngle,
+      color: bh.color,
+      createdAt: bh.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    final result = await _repository.updateBlackHole(updated);
+    result.fold(
+      (f) => state = state.copyWith(error: f),
+      (_) => state = state.copyWith(
+        blackHoles: [...state.blackHoles.where((b) => b.id != id), updated],
+      ),
+    );
+  }
+
+  /// Rename a star, preserving all other fields.
+  Future<void> renameStar(String id, String newName) async {
+    final star = state.stars.where((s) => s.id == id).firstOrNull;
+    if (star == null) return;
+    final updated = Star(
+      id: star.id,
+      name: newName,
+      x: star.x,
+      y: star.y,
+      mass: star.mass,
+      parentBlackHoleId: star.parentBlackHoleId,
+      orbitRadius: star.orbitRadius,
+      orbitAngle: star.orbitAngle,
+      color: star.color,
+      createdAt: star.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    final result = await _repository.updateStar(updated);
+    result.fold(
+      (f) => state = state.copyWith(error: f),
+      (_) => state = state.copyWith(
+        stars: [...state.stars.where((s) => s.id != id), updated],
+      ),
+    );
+  }
+
+  /// Rename a planet, preserving all other fields.
+  Future<void> renamePlanet(String id, String newName) async {
+    final planet = state.planets.where((p) => p.id == id).firstOrNull;
+    if (planet == null) return;
+    final updated = Planet(
+      id: planet.id,
+      name: newName,
+      x: planet.x,
+      y: planet.y,
+      mass: planet.mass,
+      parentStarId: planet.parentStarId,
+      orbitRadius: planet.orbitRadius,
+      orbitAngle: planet.orbitAngle,
+      color: planet.color,
+      wordCount: planet.wordCount,
+      lastOpenedAt: planet.lastOpenedAt,
+      visualState: planet.visualState,
+      createdAt: planet.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    final result = await _repository.updatePlanet(updated);
+    result.fold(
+      (f) => state = state.copyWith(error: f),
+      (_) => state = state.copyWith(
+        planets: [...state.planets.where((p) => p.id != id), updated],
+      ),
+    );
+  }
+
+  /// Update the orbit radius for a planet or star (after drag-to-resize).
+  Future<void> updateOrbitRadius(String id, String bodyType, double newRadius) async {
+    if (bodyType == 'planet') {
+      final planet = state.planets.cast<Planet?>().firstWhere(
+        (p) => p!.id == id,
+        orElse: () => null,
+      );
+      if (planet == null) return;
+      final updated = Planet(
+        id: planet.id,
+        name: planet.name,
+        x: planet.x,
+        y: planet.y,
+        mass: planet.mass,
+        parentStarId: planet.parentStarId,
+        orbitRadius: newRadius,
+        orbitAngle: planet.orbitAngle,
+        color: planet.color,
+        wordCount: planet.wordCount,
+        lastOpenedAt: planet.lastOpenedAt,
+        visualState: planet.visualState,
+        createdAt: planet.createdAt,
+        updatedAt: DateTime.now(),
+      );
+      final result = await _repository.updatePlanet(updated);
+      result.fold(
+        (f) => state = state.copyWith(error: f),
+        (_) => state = state.copyWith(
+          planets: [...state.planets.where((p) => p.id != id), updated],
+        ),
+      );
+    } else if (bodyType == 'star') {
+      final star = state.stars.cast<Star?>().firstWhere(
+        (s) => s!.id == id,
+        orElse: () => null,
+      );
+      if (star == null) return;
+      final updated = Star(
+        id: star.id,
+        name: star.name,
+        x: star.x,
+        y: star.y,
+        mass: star.mass,
+        parentBlackHoleId: star.parentBlackHoleId,
+        orbitRadius: newRadius,
+        orbitAngle: star.orbitAngle,
+        color: star.color,
+        createdAt: star.createdAt,
+        updatedAt: DateTime.now(),
+      );
+      final result = await _repository.updateStar(updated);
+      result.fold(
+        (f) => state = state.copyWith(error: f),
+        (_) => state = state.copyWith(
+          stars: [...state.stars.where((s) => s.id != id), updated],
+        ),
+      );
+    }
+  }
+
+  /// Add a moon to the given planet.
+  Future<void> addMoon(String label, String parentPlanetId) async {
+    try {
+      final random = math.Random();
+      final siblingCount =
+          state.moons.where((m) => m.parentPlanetId == parentPlanetId).length;
+      final orbitRadius = 40.0 + siblingCount * 20.0;
+      final orbitAngle = random.nextDouble() * 360.0;
+      final moon = Moon(
+        id: generateId(),
+        parentPlanetId: parentPlanetId,
+        label: label,
+        isCompleted: false,
+        orbitRadius: orbitRadius,
+        orbitAngle: orbitAngle,
+      );
+      final result = await _repository.insertMoon(moon);
+      result.fold(
+        (failure) => state = state.copyWith(error: failure),
+        (_) => state = state.copyWith(
+          moons: [...state.moons, moon],
+        ),
+      );
+    } catch (e) {
+      state = state.copyWith(error: CacheFailure('Failed to add moon: $e'));
+    }
+  }
+
+  /// Toggle the completed state of a moon.
+  Future<void> toggleMoonCompleted(String moonId) async {
+    final moon = state.moons.where((m) => m.id == moonId).firstOrNull;
+    if (moon == null) return;
+    final updated = Moon(
+      id: moon.id,
+      parentPlanetId: moon.parentPlanetId,
+      label: moon.label,
+      isCompleted: !moon.isCompleted,
+      orbitRadius: moon.orbitRadius,
+      orbitAngle: moon.orbitAngle,
+    );
+    final result = await _repository.updateMoon(updated);
+    result.fold(
+      (f) => state = state.copyWith(error: f),
+      (_) => state = state.copyWith(
+        moons: [...state.moons.where((m) => m.id != moonId), updated],
+      ),
+    );
+  }
+
+  /// Delete a moon by id.
+  Future<void> deleteMoon(String id) async {
+    try {
+      final result = await _repository.deleteMoon(id);
+      result.fold(
+        (failure) => state = state.copyWith(error: failure),
+        (_) => state = state.copyWith(
+          moons: state.moons.where((m) => m.id != id).toList(),
+        ),
+      );
+    } catch (e) {
+      state = state.copyWith(error: CacheFailure('Failed to delete moon: $e'));
     }
   }
 
@@ -309,9 +523,23 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
       final result = await _repository.deleteBlackHole(id);
       result.fold(
         (failure) => state = state.copyWith(error: failure),
-        (_) => state = state.copyWith(
-          blackHoles: state.blackHoles.where((bh) => bh.id != id).toList(),
-        ),
+        (_) {
+          // Cascade removal from in-memory state
+          final removedStarIds = state.stars
+              .where((s) => s.parentBlackHoleId == id)
+              .map((s) => s.id)
+              .toSet();
+          final removedPlanetIds = state.planets
+              .where((p) => removedStarIds.contains(p.parentStarId))
+              .map((p) => p.id)
+              .toSet();
+          state = state.copyWith(
+            blackHoles: state.blackHoles.where((bh) => bh.id != id).toList(),
+            stars: state.stars.where((s) => !removedStarIds.contains(s.id)).toList(),
+            planets: state.planets.where((p) => !removedPlanetIds.contains(p.id)).toList(),
+            moons: state.moons.where((m) => !removedPlanetIds.contains(m.parentPlanetId)).toList(),
+          );
+        },
       );
     } catch (e) {
       state = state.copyWith(error: CacheFailure('Failed to delete black hole: $e'));
@@ -323,9 +551,18 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
       final result = await _repository.deleteStar(id);
       result.fold(
         (failure) => state = state.copyWith(error: failure),
-        (_) => state = state.copyWith(
-          stars: state.stars.where((s) => s.id != id).toList(),
-        ),
+        (_) {
+          // Cascade removal from in-memory state
+          final removedPlanetIds = state.planets
+              .where((p) => p.parentStarId == id)
+              .map((p) => p.id)
+              .toSet();
+          state = state.copyWith(
+            stars: state.stars.where((s) => s.id != id).toList(),
+            planets: state.planets.where((p) => !removedPlanetIds.contains(p.id)).toList(),
+            moons: state.moons.where((m) => !removedPlanetIds.contains(m.parentPlanetId)).toList(),
+          );
+        },
       );
     } catch (e) {
       state = state.copyWith(error: CacheFailure('Failed to delete star: $e'));
@@ -334,11 +571,32 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
 
   Future<void> deletePlanet(String id) async {
     try {
+      // Cascade delete wormholes referencing this planet
+      final wormholesResult = await _wormholeRepository.getWormholes();
+      wormholesResult.fold((_) {}, (wormholes) async {
+        for (final w in wormholes) {
+          if (w.sourcePlanetId == id || w.targetPlanetId == id) {
+            await _wormholeRepository.deleteWormhole(w.id);
+          }
+        }
+      });
+
+      // Cascade delete constellation links referencing this planet
+      final linksResult = await _constellationRepository.getConstellationLinks();
+      linksResult.fold((_) {}, (links) async {
+        for (final l in links) {
+          if (l.sourcePlanetId == id || l.targetPlanetId == id) {
+            await _constellationRepository.deleteConstellationLink(l.id);
+          }
+        }
+      });
+
       final result = await _repository.deletePlanet(id);
       result.fold(
         (failure) => state = state.copyWith(error: failure),
         (_) => state = state.copyWith(
           planets: state.planets.where((p) => p.id != id).toList(),
+          moons: state.moons.where((m) => m.parentPlanetId != id).toList(),
         ),
       );
     } catch (e) {
@@ -346,14 +604,12 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
     }
   }
 
-  /// Reparent a body by deleting the old record and inserting a new one
-  /// with the updated parentId. The repository interface only exposes
-  /// insert/delete (no update), so we recreate the entity.
+  /// Reparent a body by updating its parentId in place.
   Future<void> reparentBody(String bodyId, String newParentId) async {
     final star = state.stars.where((s) => s.id == bodyId).firstOrNull;
     if (star != null) {
       final newStar = Star(
-        id: generateId(),
+        id: bodyId,
         name: star.name,
         x: star.x,
         y: star.y,
@@ -365,23 +621,20 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
         createdAt: star.createdAt,
         updatedAt: DateTime.now(),
       );
-      final del = await _repository.deleteStar(bodyId);
-      del.fold((f) { state = state.copyWith(error: f); return; }, (_) async {
-        final ins = await _repository.insertStar(newStar);
-        ins.fold(
-          (f) => state = state.copyWith(error: f),
-          (_) => state = state.copyWith(
-            stars: [...state.stars.where((s) => s.id != bodyId), newStar],
-          ),
-        );
-      });
+      final result = await _repository.updateStar(newStar);
+      result.fold(
+        (f) => state = state.copyWith(error: f),
+        (_) => state = state.copyWith(
+          stars: [...state.stars.where((s) => s.id != bodyId), newStar],
+        ),
+      );
       return;
     }
 
     final planet = state.planets.where((p) => p.id == bodyId).firstOrNull;
     if (planet != null) {
       final newPlanet = Planet(
-        id: generateId(),
+        id: bodyId,
         name: planet.name,
         x: planet.x,
         y: planet.y,
@@ -396,16 +649,13 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
         lastOpenedAt: planet.lastOpenedAt,
         visualState: planet.visualState,
       );
-      final del = await _repository.deletePlanet(bodyId);
-      del.fold((f) { state = state.copyWith(error: f); return; }, (_) async {
-        final ins = await _repository.insertPlanet(newPlanet);
-        ins.fold(
-          (f) => state = state.copyWith(error: f),
-          (_) => state = state.copyWith(
-            planets: [...state.planets.where((p) => p.id != bodyId), newPlanet],
-          ),
-        );
-      });
+      final result = await _repository.updatePlanet(newPlanet);
+      result.fold(
+        (f) => state = state.copyWith(error: f),
+        (_) => state = state.copyWith(
+          planets: [...state.planets.where((p) => p.id != bodyId), newPlanet],
+        ),
+      );
     }
   }
 }
@@ -413,7 +663,9 @@ class GalaxyNotifier extends StateNotifier<GalaxyState> {
 final galaxyProvider =
     StateNotifierProvider<GalaxyNotifier, GalaxyState>((ref) {
   final repository = ref.watch(celestialBodyRepositoryProvider);
-  return GalaxyNotifier(repository);
+  final wormholeRepo = ref.watch(wormholeRepositoryProvider);
+  final constellationRepo = ref.watch(constellationRepositoryProvider);
+  return GalaxyNotifier(repository, wormholeRepo, constellationRepo);
 });
 
 /// Repository provider — wired to data layer via DI providers.

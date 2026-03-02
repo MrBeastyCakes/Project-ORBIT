@@ -60,15 +60,28 @@ class _SurfaceScreenState extends ConsumerState<SurfaceScreen> {
         }
       }
       _quillController.addListener(_onDocumentChanged);
+      // Compute initial word count from loaded content
+      final loadedText = _quillController.document.toPlainText().trim();
+      _wordCount = loadedText.isEmpty
+          ? 0
+          : loadedText.split(RegExp(r'\s+')).length;
       if (mounted) setState(() => _initialized = true);
     } catch (_) {
       if (mounted) setState(() => _loadError = true);
     }
   }
 
+  int _wordCount = 0;
+
   void _onDocumentChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(seconds: 3), _autoSave);
+    // Update live word count
+    final text = _quillController.document.toPlainText().trim();
+    final count = text.isEmpty ? 0 : text.split(RegExp(r'\s+')).length;
+    if (count != _wordCount) {
+      setState(() => _wordCount = count);
+    }
   }
 
   Future<void> _autoSave() async {
@@ -131,28 +144,61 @@ class _SurfaceScreenState extends ConsumerState<SurfaceScreen> {
           color: ThemeConstants.starColor,
           onPressed: _onBack,
         ),
-        title: Text(
-          _planetName(),
-          style: const TextStyle(
-            color: ThemeConstants.starColor,
-            fontSize: 16,
-          ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _planetName(),
+              style: const TextStyle(
+                color: ThemeConstants.starColor,
+                fontSize: 16,
+              ),
+            ),
+            Text(
+              '$_wordCount ${_wordCount == 1 ? 'word' : 'words'}',
+              style: TextStyle(
+                color: ThemeConstants.starColor.withValues(alpha: 0.5),
+                fontSize: 11,
+              ),
+            ),
+          ],
         ),
         actions: [
           Consumer(
             builder: (_, ref, __) {
-              final isDirty = ref.watch(editorProvider).isDirty;
-              return isDirty
-                  ? IconButton(
-                      icon: const Icon(
-                        Icons.save_outlined,
-                        color: ThemeConstants.accentColor,
-                      ),
-                      tooltip: 'Save',
-                      onPressed: () =>
-                          ref.read(editorProvider.notifier).saveNote(),
-                    )
-                  : const SizedBox.shrink();
+              final editorState = ref.watch(editorProvider);
+              if (editorState.isLoading) {
+                return const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: ThemeConstants.accentColor,
+                    ),
+                  ),
+                );
+              }
+              if (editorState.isDirty) {
+                return IconButton(
+                  icon: const Icon(
+                    Icons.save_outlined,
+                    color: ThemeConstants.accentColor,
+                  ),
+                  tooltip: 'Save now',
+                  onPressed: () =>
+                      ref.read(editorProvider.notifier).saveNote(),
+                );
+              }
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Icon(
+                  Icons.cloud_done_outlined,
+                  color: ThemeConstants.starColor.withValues(alpha: 0.4),
+                  size: 20,
+                ),
+              );
             },
           ),
         ],

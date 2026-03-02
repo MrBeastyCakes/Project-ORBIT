@@ -13,6 +13,7 @@ import '../widgets/color_picker_dialog.dart';
 import '../widgets/context_menu.dart';
 import '../widgets/quick_capture_fab.dart';
 import '../widgets/zoom_indicator.dart';
+import 'settings_screen.dart';
 import 'surface_screen.dart';
 import 'telescope_screen.dart';
 
@@ -62,6 +63,18 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
         _contextMenuPosition = Offset(screenPos.x, screenPos.y);
         _showContextMenu = true;
       });
+    };
+
+    game.onReparent = (bodyId, bodyType, newParentId) {
+      if (!mounted) return;
+      ref.read(galaxyProvider.notifier).reparentBody(bodyId, newParentId);
+    };
+
+    game.onOrbitRadiusChanged = (bodyId, bodyType, newRadius) {
+      if (!mounted) return;
+      ref.read(galaxyProvider.notifier).updateOrbitRadius(
+        bodyId, bodyType, newRadius,
+      );
     };
 
     game.onCanvasTapped = (screenPos) {
@@ -117,17 +130,17 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
         }
         ref.read(navigationProvider.notifier).enterSurface(bodyId);
       case ContextMenuAction.addMoon:
-        // Moon creation placeholder -- not wired in this phase
-        break;
+        _showNameDialog('New Moon', (label) {
+          ref.read(galaxyProvider.notifier).addMoon(label, bodyId);
+        }, confirmLabel: 'Add');
       case ContextMenuAction.createWormhole:
-        // Wormhole creation placeholder -- not wired in this phase
-        break;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Wormhole creation coming soon!')),
+        );
       case ContextMenuAction.toggleComplete:
-        // Moon toggle placeholder -- not wired in this phase
-        break;
+        ref.read(galaxyProvider.notifier).toggleMoonCompleted(bodyId);
       case ContextMenuAction.rename:
-        // Rename placeholder -- not wired in this phase
-        break;
+        _showRenameDialog(bodyId);
       case ContextMenuAction.changeColor:
         _handleChangeColor(bodyId);
       case ContextMenuAction.delete:
@@ -187,17 +200,64 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
 
   void _handleDelete(String bodyId) {
     final galaxyState = ref.read(galaxyProvider);
+    String title;
+    String message;
+    VoidCallback onConfirm;
+
     if (galaxyState.blackHoles.any((bh) => bh.id == bodyId)) {
-      ref.read(galaxyProvider.notifier).deleteBlackHole(bodyId);
+      title = 'Delete Black Hole';
+      message = 'This will delete all stars and planets inside. This cannot be undone.';
+      onConfirm = () => ref.read(galaxyProvider.notifier).deleteBlackHole(bodyId);
     } else if (galaxyState.stars.any((s) => s.id == bodyId)) {
-      ref.read(galaxyProvider.notifier).deleteStar(bodyId);
+      title = 'Delete Star';
+      message = 'This will delete all planets inside. This cannot be undone.';
+      onConfirm = () => ref.read(galaxyProvider.notifier).deleteStar(bodyId);
     } else if (galaxyState.planets.any((p) => p.id == bodyId)) {
-      ref.read(galaxyProvider.notifier).deletePlanet(bodyId);
+      title = 'Delete Planet';
+      message = 'This will delete the planet and all its notes. This cannot be undone.';
+      onConfirm = () => ref.read(galaxyProvider.notifier).deletePlanet(bodyId);
+    } else if (galaxyState.moons.any((m) => m.id == bodyId)) {
+      title = 'Delete Moon';
+      message = 'Delete this moon? This cannot be undone.';
+      onConfirm = () => ref.read(galaxyProvider.notifier).deleteMoon(bodyId);
+    } else {
+      return;
     }
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        content: Text(
+          message,
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              onConfirm();
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
   }
 
-  void _showNameDialog(String title, void Function(String) onConfirm) {
-    final controller = TextEditingController();
+  void _showNameDialog(
+    String title,
+    void Function(String) onConfirm, {
+    String? initialValue,
+    String confirmLabel = 'Create',
+  }) {
+    final controller = TextEditingController(text: initialValue ?? '');
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -231,11 +291,41 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
                 Navigator.of(ctx).pop();
               }
             },
-            child: const Text('Create'),
+            child: Text(confirmLabel),
           ),
         ],
       ),
     );
+  }
+
+  void _showRenameDialog(String bodyId) {
+    final galaxyState = ref.read(galaxyProvider);
+    final bh = galaxyState.blackHoles.where((b) => b.id == bodyId).firstOrNull;
+    final star = galaxyState.stars.where((s) => s.id == bodyId).firstOrNull;
+    final planet = galaxyState.planets.where((p) => p.id == bodyId).firstOrNull;
+
+    if (bh != null) {
+      _showNameDialog(
+        'Rename Black Hole',
+        (newName) => ref.read(galaxyProvider.notifier).renameBlackHole(bodyId, newName),
+        initialValue: bh.name,
+        confirmLabel: 'Rename',
+      );
+    } else if (star != null) {
+      _showNameDialog(
+        'Rename Star',
+        (newName) => ref.read(galaxyProvider.notifier).renameStar(bodyId, newName),
+        initialValue: star.name,
+        confirmLabel: 'Rename',
+      );
+    } else if (planet != null) {
+      _showNameDialog(
+        'Rename Planet',
+        (newName) => ref.read(galaxyProvider.notifier).renamePlanet(bodyId, newName),
+        initialValue: planet.name,
+        confirmLabel: 'Rename',
+      );
+    }
   }
 
   void _showCreateBlackHoleDialog() {
@@ -256,7 +346,7 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
     // Listen for search result changes while telescope is open and update game
     ProviderSubscription<List<String>>? sub;
     sub = ref.listenManual<List<String>>(
-      searchProvider.select((s) => s.results),
+      searchProvider.select((s) => s.results.map((h) => h.planetId).toList()),
       (_, matchingIds) {
         game.enterTelescopeMode(matchingIds);
       },
@@ -424,10 +514,24 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
           Positioned(
             top: MediaQuery.of(context).padding.top + 4,
             right: 8,
-            child: IconButton(
-              icon: const Icon(Icons.search, color: Colors.white),
-              tooltip: 'Search notes',
-              onPressed: () => _openTelescope(game),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined, color: Colors.white),
+                  tooltip: 'Settings',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const SettingsScreen(),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.search, color: Colors.white),
+                  tooltip: 'Search notes',
+                  onPressed: () => _openTelescope(game),
+                ),
+              ],
             ),
           ),
 
@@ -477,14 +581,11 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
                 behavior: HitTestBehavior.opaque,
                 child: Stack(
                   children: [
-                    Positioned(
-                      left: _contextMenuPosition.dx,
-                      top: _contextMenuPosition.dy,
-                      child: ContextMenu(
-                        bodyType: _tappedBodyType!,
-                        onAction: _handleContextMenuAction,
-                        currentColor: _currentBodyColor(),
-                      ),
+                    _ClampedContextMenu(
+                      position: _contextMenuPosition,
+                      bodyType: _tappedBodyType!,
+                      onAction: _handleContextMenuAction,
+                      currentColor: _currentBodyColor(),
                     ),
                   ],
                 ),
@@ -580,6 +681,7 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
         moons: next.moons,
         asteroids: next.asteroids,
       );
+      game.frameAllBodies();
       return;
     }
 
@@ -634,5 +736,40 @@ class _GalaxyScreenState extends ConsumerState<GalaxyScreen> {
     for (final id in prevAsteroidIds.difference(nextAsteroidIds)) {
       gc.removeAsteroid(id);
     }
+  }
+}
+
+/// Positions a [ContextMenu] so it stays within screen bounds.
+class _ClampedContextMenu extends StatelessWidget {
+  final Offset position;
+  final CelestialBodyType bodyType;
+  final void Function(ContextMenuAction) onAction;
+  final int? currentColor;
+
+  // Estimated max dimensions for the context menu — used for clamping.
+  static const double _menuWidth = 200.0;
+  static const double _menuHeight = 280.0;
+
+  const _ClampedContextMenu({
+    required this.position,
+    required this.bodyType,
+    required this.onAction,
+    this.currentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final clampedLeft = position.dx.clamp(0.0, size.width - _menuWidth);
+    final clampedTop = position.dy.clamp(0.0, size.height - _menuHeight);
+    return Positioned(
+      left: clampedLeft,
+      top: clampedTop,
+      child: ContextMenu(
+        bodyType: bodyType,
+        onAction: onAction,
+        currentColor: currentColor,
+      ),
+    );
   }
 }

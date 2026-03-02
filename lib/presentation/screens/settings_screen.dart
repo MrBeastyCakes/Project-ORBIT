@@ -188,30 +188,106 @@ class SettingsScreen extends ConsumerWidget {
           _DefaultColorSection(context: context, ref: ref),
           const SizedBox(height: 16),
 
-          // Sign out
+          // Sign out + account deletion
           if (user != null) ...[
             _SectionHeader(title: 'Account Actions'),
             Card(
               color: ThemeConstants.surfaceColor,
-              child: ListTile(
-                leading: const Icon(
-                  Icons.logout,
-                  color: Colors.redAccent,
-                ),
-                title: const Text(
-                  'Sign Out',
-                  style: TextStyle(color: Colors.redAccent),
-                ),
-                onTap: () async {
-                  await ref.read(authProvider.notifier).signOut();
-                  if (context.mounted) Navigator.of(context).pop();
-                },
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(
+                      Icons.logout,
+                      color: Colors.redAccent,
+                    ),
+                    title: const Text(
+                      'Sign Out',
+                      style: TextStyle(color: Colors.redAccent),
+                    ),
+                    onTap: () async {
+                      await ref.read(authProvider.notifier).signOut();
+                      if (context.mounted) Navigator.of(context).pop();
+                    },
+                  ),
+                  Divider(
+                    height: 1,
+                    color: ThemeConstants.accentColor.withValues(alpha: 0.15),
+                  ),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.delete_forever,
+                      color: Colors.red,
+                    ),
+                    title: const Text(
+                      'Delete Account',
+                      style: TextStyle(color: Colors.red),
+                    ),
+                    subtitle: Text(
+                      'Permanently delete your account and all data',
+                      style: TextStyle(
+                        color: ThemeConstants.starColor.withValues(alpha: 0.5),
+                        fontSize: 12,
+                      ),
+                    ),
+                    onTap: () => _confirmDeleteAccount(context, ref),
+                  ),
+                ],
               ),
             ),
           ],
         ],
       ),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Account deletion confirmation dialog
+// ---------------------------------------------------------------------------
+
+Future<void> _confirmDeleteAccount(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: ThemeConstants.surfaceColor,
+      title: const Text(
+        'Delete Account?',
+        style: TextStyle(color: ThemeConstants.starColor),
+      ),
+      content: Text(
+        'This will permanently delete your account and all associated data. '
+        'This action cannot be undone.',
+        style: TextStyle(
+          color: ThemeConstants.starColor.withValues(alpha: 0.8),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text(
+            'Cancel',
+            style: TextStyle(
+              color: ThemeConstants.accentColor.withValues(alpha: 0.8),
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text(
+            'Delete',
+            style: TextStyle(color: Colors.red),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed == true && context.mounted) {
+    await ref.read(authProvider.notifier).deleteAccount();
+    if (context.mounted) Navigator.of(context).pop();
   }
 }
 

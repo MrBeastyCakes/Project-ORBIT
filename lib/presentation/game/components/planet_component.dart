@@ -32,7 +32,7 @@ class PlanetComponent extends PositionComponent
 
   bool _isDragging = false;
   double _holdTimer = 0.0;
-  bool _holdActive = false;
+  bool _holdActive = false; // pointer is down, waiting for long-press
 
   /// Scale applied during drag for visual feedback (1.2x target).
   double _dragScale = 1.0;
@@ -145,7 +145,7 @@ class PlanetComponent extends PositionComponent
     super.update(dt);
     _pulseTimer += dt;
 
-    // Long-press timer: accumulate while pointer is held.
+    // Long-press timer: orbit pauses on touch, drag activates after threshold.
     if (_holdActive && !_isDragging) {
       _holdTimer += dt;
       if (_holdTimer >= _longPressThreshold) {
@@ -340,8 +340,10 @@ class PlanetComponent extends PositionComponent
   @override
   bool onDragStart(DragStartEvent event) {
     super.onDragStart(event);
+    // Pause orbit so the body freezes — easier to long-press.
     _holdActive = true;
     _holdTimer = 0.0;
+    game.orbitSystem.pause(entity.id);
     return true;
   }
 
@@ -349,7 +351,6 @@ class PlanetComponent extends PositionComponent
   bool onDragUpdate(DragUpdateEvent event) {
     super.onDragUpdate(event);
     if (!_isDragging) return true;
-
     position += event.localDelta;
     game.dragSystem?.updateDrag(position.clone());
     return true;
@@ -359,10 +360,27 @@ class PlanetComponent extends PositionComponent
   bool onDragEnd(DragEndEvent event) {
     super.onDragEnd(event);
     _holdActive = false;
-    if (!_isDragging) return true;
+    game.orbitSystem.resume(entity.id);
 
+    if (!_isDragging) return true;
     _isDragging = false;
-    game.dragSystem?.endDrag(position.clone());
+
+    final dragSystem = game.dragSystem;
+    if (dragSystem == null) {
+      reregisterAfterDrag();
+      return true;
+    }
+
+    // Read the target parent before endDrag clears state.
+    final targetParentId = dragSystem.currentTargetParentId;
+    dragSystem.endDrag(position.clone());
+
+    // Update entity with new parent + orbit radius from drag system callbacks.
+    // Re-register with the (possibly new) parent.
+    if (targetParentId != null && targetParentId != entity.parentStarId) {
+      // Reparented — entity will be updated via the reparent callback path.
+    }
+    reregisterAfterDrag();
     return true;
   }
 
@@ -370,9 +388,11 @@ class PlanetComponent extends PositionComponent
   bool onDragCancel(DragCancelEvent event) {
     super.onDragCancel(event);
     _holdActive = false;
+    game.orbitSystem.resume(entity.id);
     if (_isDragging) {
       _isDragging = false;
       game.dragSystem?.cancelDrag();
+      reregisterAfterDrag();
     }
     return true;
   }
@@ -382,8 +402,33 @@ class PlanetComponent extends PositionComponent
   void _beginDrag() {
     _isDragging = true;
     _holdActive = false;
-    // Unregister from orbit system so it follows the finger, not the orbit.
+    // Unregister from orbit/gravity so the body follows the finger.
     game.orbitSystem.unregister(entity.id);
-    game.dragSystem?.startDragPlanet(entity.id, position.clone());
+    game.gravitySystem.unregister(entity.id);
+    game.dragSystem?.startDragPlanet(
+      entity.id, position.clone(), entity.parentStarId,
+    );
+  }
+
+  /// Re-register this planet with the orbit and gravity systems after a drag
+  /// ends without reparenting (snap-back case).
+  void reregisterAfterDrag() {
+    final orbitSystem = game.orbitSystem;
+    orbitSystem.registerPlanet(
+      component: this,
+      id: entity.id,
+      orbitRadius: entity.orbitRadius,
+      getParentPosition: () =>
+          game.galaxyComponent.getStar(entity.parentStarId)?.position ??
+          Vector2.zero(),
+    );
+    orbitSystem.setGravityManaged(entity.id);
+    game.gravitySystem.register(
+      id: entity.id,
+      mass: entity.mass,
+      getBasePosition: () =>
+          orbitSystem.basePositions[entity.id] ?? position,
+      updatePosition: (x, y) => position = Vector2(x, y),
+    );
   }
 }

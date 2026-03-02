@@ -2,15 +2,24 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/datasources/local_search_datasource.dart';
 import '../../domain/entities/planet.dart';
 import '../../domain/repositories/search_repository.dart';
 import '../../core/errors/failures.dart';
 import 'providers.dart';
 import 'galaxy_provider.dart';
 
+/// A search result pairing a Planet with an optional text snippet.
+class SearchResultItem {
+  final Planet planet;
+  final String? snippet;
+
+  const SearchResultItem({required this.planet, this.snippet});
+}
+
 class SearchState {
   final String query;
-  final List<String> results; // planet IDs returned by search
+  final List<SearchHit> results;
   final bool isSearching;
   final bool isTelescopeActive;
   final Failure? error;
@@ -25,7 +34,7 @@ class SearchState {
 
   SearchState copyWith({
     String? query,
-    List<String>? results,
+    List<SearchHit>? results,
     bool? isSearching,
     bool? isTelescopeActive,
     Failure? error,
@@ -67,8 +76,8 @@ class SearchNotifier extends StateNotifier<SearchState> {
     result.fold(
       (failure) =>
           state = state.copyWith(isSearching: false, error: failure),
-      (ids) =>
-          state = state.copyWith(results: ids, isSearching: false),
+      (hits) =>
+          state = state.copyWith(results: hits, isSearching: false),
     );
   }
 
@@ -103,13 +112,22 @@ final searchRepositoryProvider = Provider<SearchRepository>((ref) {
   return ref.watch(searchRepositoryImplProvider);
 });
 
-/// Derived provider: maps search result IDs to Planet entities from galaxy state.
-final searchResultPlanetsProvider = Provider<List<Planet>>((ref) {
+/// Derived provider: maps search result hits to SearchResultItems (Planet + snippet).
+final searchResultItemsProvider = Provider<List<SearchResultItem>>((ref) {
   final searchState = ref.watch(searchProvider);
   final galaxyState = ref.watch(galaxyProvider);
   if (searchState.results.isEmpty) return const [];
-  final resultSet = searchState.results.toSet();
-  return galaxyState.planets
-      .where((p) => resultSet.contains(p.id))
+  final planetMap = {for (final p in galaxyState.planets) p.id: p};
+  return searchState.results
+      .where((hit) => planetMap.containsKey(hit.planetId))
+      .map((hit) => SearchResultItem(
+            planet: planetMap[hit.planetId]!,
+            snippet: hit.snippet,
+          ))
       .toList();
+});
+
+/// Backwards-compatible provider returning just the Planet list.
+final searchResultPlanetsProvider = Provider<List<Planet>>((ref) {
+  return ref.watch(searchResultItemsProvider).map((r) => r.planet).toList();
 });

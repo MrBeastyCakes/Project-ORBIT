@@ -26,6 +26,7 @@ class CameraSystem {
   Vector2? _targetPosition;
   double? _targetZoom;
   double _transitionElapsed = 0.0;
+  double _transitionDurationActive = _transitionDuration;
   Vector2? _startPosition;
   double? _startZoom;
 
@@ -58,17 +59,48 @@ class CameraSystem {
     );
   }
 
+  /// Frames the camera to fit all given body positions with padding.
+  void frameAllBodies(List<Vector2> positions, Vector2 viewportSize) {
+    if (positions.isEmpty) return;
+
+    // Calculate bounding box
+    double minX = positions.first.x, maxX = positions.first.x;
+    double minY = positions.first.y, maxY = positions.first.y;
+    for (final p in positions) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    // Center of bounding box
+    final center = Vector2((minX + maxX) / 2, (minY + maxY) / 2);
+
+    // Calculate zoom to fit with 20% padding
+    final width = (maxX - minX) + 400; // add padding for body radii
+    final height = (maxY - minY) + 400;
+    final zoomX = viewportSize.x / width;
+    final zoomY = viewportSize.y / height;
+    final zoom = (zoomX < zoomY ? zoomX : zoomY).clamp(0.05, 5.0);
+
+    // Animate to the framed view with a slightly longer duration so the
+    // initial framing feels intentional.
+    animateTo(targetWorld: center, targetZoom: zoom, duration: 0.8);
+  }
+
   /// Starts a smooth animated transition to [targetWorld] at [targetZoom].
   /// Call [updateTransition] each frame to advance the animation.
   void animateTo({
     required Vector2 targetWorld,
     required double targetZoom,
+    double duration = _transitionDuration,
   }) {
     _startPosition = camera.viewfinder.position.clone();
     _startZoom = camera.viewfinder.zoom;
     _targetPosition = targetWorld.clone();
     _targetZoom = targetZoom.clamp(0.05, 5.0);
     _transitionElapsed = 0.0;
+    _transitionDurationActive = duration;
   }
 
   /// Advances the smooth transition animation. Call once per frame.
@@ -77,7 +109,7 @@ class CameraSystem {
     if (_targetPosition == null) return false;
 
     _transitionElapsed += dt;
-    final t = (_transitionElapsed / _transitionDuration).clamp(0.0, 1.0);
+    final t = (_transitionElapsed / _transitionDurationActive).clamp(0.0, 1.0);
     // Ease-out cubic for smooth deceleration.
     final eased = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
 

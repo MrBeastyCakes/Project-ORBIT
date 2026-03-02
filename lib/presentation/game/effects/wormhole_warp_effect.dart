@@ -22,7 +22,8 @@ enum _WarpPhase { zoomIn, flash, snap, zoomOut, done }
 ///   targetWorld: targetPlanetWorldPos,
 ///   normalZoom: game.currentZoom,
 /// );
-/// game.world.add(warp);
+/// // Add to the viewport so the flash overlay renders in screen space.
+/// game.camera.viewport.add(warp);
 /// ```
 class WormholeWarpEffect extends Component {
   final CameraComponent camera;

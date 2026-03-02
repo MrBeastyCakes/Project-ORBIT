@@ -10,7 +10,7 @@ class SearchRepositoryImpl implements SearchRepository {
   const SearchRepositoryImpl({required this.datasource});
 
   @override
-  Future<Either<Failure, List<String>>> searchNotes(String query) async {
+  Future<Either<Failure, List<SearchHit>>> searchNotes(String query) async {
     try {
       final results = await datasource.searchNotes(query);
       return Right(results);

@@ -28,7 +28,7 @@ class PlanetModelAdapter extends TypeAdapter<PlanetModel> {
       color: fields[8] as int,
       wordCount: fields[9] as int,
       lastOpenedAt: fields[10] as DateTime?,
-      visualState: fields[11] as int,
+      visualState: fields[11] as String,
       createdAt: fields[12] as DateTime,
       updatedAt: fields[13] as DateTime,
     );

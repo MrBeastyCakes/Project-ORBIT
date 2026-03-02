@@ -9,7 +9,7 @@ import 'package:orbit_app/presentation/game/orbit_game.dart';
 
 class StarComponent extends PositionComponent
     with TapCallbacks, DragCallbacks, HasGameReference<OrbitGame> {
-  final Star entity;
+  Star entity;
 
   static const double _radius = 30.0;
 
@@ -42,7 +42,7 @@ class StarComponent extends PositionComponent
     super.update(dt);
     _pulseTimer += dt;
 
-    // Long-press timer: accumulate while pointer is held.
+    // Long-press timer: orbit pauses on touch, drag activates after threshold.
     if (_holdActive && !_isDragging) {
       _holdTimer += dt;
       if (_holdTimer >= _longPressThreshold) {
@@ -142,9 +142,10 @@ class StarComponent extends PositionComponent
   @override
   bool onDragStart(DragStartEvent event) {
     super.onDragStart(event);
-    // Begin holding the timer; drag only activates after long-press threshold.
+    // Pause orbit so the star freezes — easier to long-press.
     _holdActive = true;
     _holdTimer = 0.0;
+    game.orbitSystem.pause(entity.id);
     return true;
   }
 
@@ -153,11 +154,10 @@ class StarComponent extends PositionComponent
     super.onDragUpdate(event);
     if (!_isDragging) return true;
 
-    // Move the component.
     final delta = event.localDelta;
     position += delta;
 
-    // Also move all child planets to follow the star.
+    // Move child planets to follow the star during drag.
     final dragSystem = game.dragSystem;
     if (dragSystem != null) {
       for (final planet in dragSystem.planets.values) {
@@ -175,10 +175,24 @@ class StarComponent extends PositionComponent
   bool onDragEnd(DragEndEvent event) {
     super.onDragEnd(event);
     _holdActive = false;
-    if (!_isDragging) return true;
+    game.orbitSystem.resume(entity.id);
 
+    if (!_isDragging) return true;
     _isDragging = false;
-    game.dragSystem?.endDrag(position.clone());
+
+    final dragSystem = game.dragSystem;
+    if (dragSystem == null) {
+      _reregisterAfterDrag();
+      return true;
+    }
+
+    final targetParentId = dragSystem.currentTargetParentId;
+    dragSystem.endDrag(position.clone());
+
+    if (targetParentId != null && targetParentId != entity.parentBlackHoleId) {
+      // Reparented — entity will be updated via the reparent callback path.
+    }
+    _reregisterAfterDrag();
     return true;
   }
 
@@ -186,9 +200,11 @@ class StarComponent extends PositionComponent
   bool onDragCancel(DragCancelEvent event) {
     super.onDragCancel(event);
     _holdActive = false;
+    game.orbitSystem.resume(entity.id);
     if (_isDragging) {
       _isDragging = false;
       game.dragSystem?.cancelDrag();
+      _reregisterAfterDrag();
     }
     return true;
   }
@@ -198,9 +214,32 @@ class StarComponent extends PositionComponent
   void _beginDrag() {
     _isDragging = true;
     _holdActive = false;
-    final dragSystem = game.dragSystem;
-    if (dragSystem != null) {
-      dragSystem.startDragStar(entity.id, position.clone());
-    }
+    // Unregister from orbit/gravity so the body follows the finger.
+    game.orbitSystem.unregister(entity.id);
+    game.gravitySystem.unregister(entity.id);
+    game.dragSystem?.startDragStar(
+      entity.id, position.clone(), entity.parentBlackHoleId,
+    );
+  }
+
+  /// Re-register this star with the orbit and gravity systems after drag.
+  void _reregisterAfterDrag() {
+    final orbitSystem = game.orbitSystem;
+    orbitSystem.registerStar(
+      component: this,
+      id: entity.id,
+      orbitRadius: entity.orbitRadius,
+      getParentPosition: () =>
+          game.galaxyComponent.getBlackHole(entity.parentBlackHoleId)?.position ??
+          Vector2.zero(),
+    );
+    orbitSystem.setGravityManaged(entity.id);
+    game.gravitySystem.register(
+      id: entity.id,
+      mass: entity.mass,
+      getBasePosition: () =>
+          orbitSystem.basePositions[entity.id] ?? position,
+      updatePosition: (x, y) => position = Vector2(x, y),
+    );
   }
 }

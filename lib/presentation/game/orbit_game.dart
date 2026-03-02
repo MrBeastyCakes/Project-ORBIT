@@ -1,9 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:orbit_app/presentation/game/components/galaxy_component.dart';
 import 'package:orbit_app/presentation/game/systems/camera_system.dart';
 import 'package:orbit_app/presentation/game/systems/drag_system.dart';
+import 'package:orbit_app/presentation/game/systems/gravity_system.dart';
 import 'package:orbit_app/presentation/game/systems/orbit_system.dart';
 import 'package:orbit_app/presentation/game/systems/tidal_lock_system.dart';
 
@@ -28,6 +31,15 @@ typedef ReparentCallback = void Function(
   String newParentId,
 );
 
+/// Callback for when a body's orbit radius is changed via drag.
+/// [bodyId] is the entity id, [bodyType] is 'planet' or 'star',
+/// [newOrbitRadius] is the new distance from its parent.
+typedef OrbitRadiusChangedCallback = void Function(
+  String bodyId,
+  String bodyType,
+  double newOrbitRadius,
+);
+
 /// Callback for when a wormhole is tapped; [targetPlanetId] is the
 /// destination planet to warp the camera to.
 typedef WormholeTappedCallback = void Function(String targetPlanetId);
@@ -38,12 +50,40 @@ class OrbitGame extends FlameGame with ScaleDetector, TapCallbacks {
 
   late final GalaxyComponent _galaxyComponent;
   late final OrbitSystem _orbitSystem;
+  late final GravitySystem _gravitySystem;
   late final DragSystem _dragSystem;
   late final TidalLockSystem _tidalLockSystem;
   late final CameraSystem _cameraSystem;
 
   double _currentZoom = 1.0;
+
+  // ── Gesture tracking ────────────────────────────────────────────────────────
+
+  /// Zoom level when the gesture started (for correct cumulative scale).
+  double _zoomAtScaleStart = 1.0;
+
+  /// Focal point at previous update (screen coords) for pan delta.
   Vector2 _lastFocalPoint = Vector2.zero();
+
+  /// World-space position of the focal point at gesture start (for focal zoom).
+  Vector2 _focalWorldStart = Vector2.zero();
+
+  /// Timestamp (microseconds) of the last onScaleUpdate call, for velocity calc.
+  int _lastScaleUpdateUs = 0;
+
+  // ── Momentum / inertia ──────────────────────────────────────────────────────
+
+  /// Current pan velocity in world units/sec, decays after release.
+  Vector2 _velocity = Vector2.zero();
+
+  /// Friction factor — velocity is multiplied by this each second.
+  static const double _friction = 0.02;
+
+  /// Minimum speed threshold to stop momentum.
+  static const double _minSpeed = 5.0;
+
+  /// Whether a gesture is currently active (suppresses momentum).
+  bool _gestureActive = false;
 
   /// Set by the widget layer to receive body tap events.
   BodyTappedCallback? onBodyTapped;
@@ -55,6 +95,9 @@ class OrbitGame extends FlameGame with ScaleDetector, TapCallbacks {
   /// Called after a successful drop with (bodyId, bodyType, newParentId).
   ReparentCallback? onReparent;
 
+  /// Set by the widget layer to persist orbit radius changes from drag.
+  OrbitRadiusChangedCallback? onOrbitRadiusChanged;
+
   /// Set by the widget layer to receive wormhole tap events.
   /// The callback receives the target planet id; use it to trigger
   /// a [WormholeWarpEffect] or [CameraSystem.zoomToBody] call.
@@ -65,6 +108,9 @@ class OrbitGame extends FlameGame with ScaleDetector, TapCallbacks {
   /// Exposed so components can unregister from orbit during drag.
   OrbitSystem get orbitSystem => _orbitSystem;
 
+  /// Exposed so GalaxyComponent can register bodies for gravity interaction.
+  GravitySystem get gravitySystem => _gravitySystem;
+
   /// Exposed so components can notify the drag system.
   DragSystem? get dragSystem => _dragSystem;
 
@@ -73,6 +119,9 @@ class OrbitGame extends FlameGame with ScaleDetector, TapCallbacks {
 
   /// Exposes the camera system for smooth transitions.
   CameraSystem get cameraSystem => _cameraSystem;
+
+  /// Current zoom level (read by ZoomIndicator widget).
+  double get currentZoom => _currentZoom;
 
   @override
   Color backgroundColor() => const Color(0xFF0A0A1A);
@@ -83,6 +132,9 @@ class OrbitGame extends FlameGame with ScaleDetector, TapCallbacks {
 
     _orbitSystem = OrbitSystem();
     await world.add(_orbitSystem);
+
+    _gravitySystem = GravitySystem();
+    await world.add(_gravitySystem);
 
     _galaxyComponent = GalaxyComponent();
     await world.add(_galaxyComponent);
@@ -97,18 +149,38 @@ class OrbitGame extends FlameGame with ScaleDetector, TapCallbacks {
     _dragSystem.onReparentStar = (starId, newBlackHoleId) {
       onReparent?.call(starId, 'star', newBlackHoleId);
     };
+    _dragSystem.onOrbitRadiusChanged = (bodyId, bodyType, newRadius) {
+      onOrbitRadiusChanged?.call(bodyId, bodyType, newRadius);
+    };
 
     _tidalLockSystem = TidalLockSystem(galaxy: _galaxyComponent);
     await world.add(_tidalLockSystem);
 
     _cameraSystem = CameraSystem(camera: camera);
+
+    // Wire DragSystem to live galaxy maps (must happen after both are mounted).
+    syncDragSystemRefs();
   }
 
   @override
   void update(double dt) {
     super.update(dt);
+
+    // Apply momentum when no gesture is active.
+    if (!_gestureActive && _velocity.length > _minSpeed) {
+      camera.viewfinder.position =
+          camera.viewfinder.position + _velocity * dt;
+      // Exponential decay: v *= friction^dt
+      final decay = math.pow(_friction, dt).toDouble();
+      _velocity.scale(decay);
+    } else if (!_gestureActive) {
+      _velocity.setZero();
+    }
+
     // Advance any smooth camera transition in progress.
     _cameraSystem.updateTransition(dt);
+    // Keep _currentZoom in sync after camera animations (Bug fix: zoom desync).
+    _currentZoom = camera.viewfinder.zoom;
     // Update viewport bounds and LOD tier from current camera state.
     _galaxyComponent.updateViewportAndLod();
     // Keep constellation lines tracking their orbiting planets each frame.
@@ -120,33 +192,77 @@ class OrbitGame extends FlameGame with ScaleDetector, TapCallbacks {
   void syncDragSystemRefs() {
     _dragSystem.stars = _galaxyComponent.starsMap;
     _dragSystem.blackHoles = _galaxyComponent.blackHolesMap;
-    _dragSystem.planets = Map.of(_galaxyComponent.allPlanetComponents);
+    _dragSystem.planets = _galaxyComponent.allPlanetComponents;
+  }
+
+  /// Frames the camera to show all loaded bodies.
+  void frameAllBodies() {
+    _galaxyComponent.frameAll();
+  }
+
+  /// Convert a screen-space point to world-space using current camera state.
+  Vector2 _screenToWorld(Vector2 screenPoint) {
+    final camPos = camera.viewfinder.position;
+    final viewportSize = camera.viewport.size;
+    return Vector2(
+      camPos.x + (screenPoint.x - viewportSize.x / 2) / _currentZoom,
+      camPos.y + (screenPoint.y - viewportSize.y / 2) / _currentZoom,
+    );
   }
 
   @override
   void onScaleStart(ScaleStartInfo info) {
+    _gestureActive = true;
+    _velocity.setZero();
     _lastFocalPoint = info.eventPosition.global;
+    _zoomAtScaleStart = _currentZoom;
+    _focalWorldStart = _screenToWorld(info.eventPosition.global);
+    _lastScaleUpdateUs = DateTime.now().microsecondsSinceEpoch;
   }
 
   @override
   void onScaleUpdate(ScaleUpdateInfo info) {
-    // Pan: translate camera by focal point delta
     final currentFocal = info.eventPosition.global;
-    final panDelta = currentFocal - _lastFocalPoint;
-    _lastFocalPoint = currentFocal;
-    camera.viewfinder.position =
-        camera.viewfinder.position - panDelta / _currentZoom;
 
-    // Zoom: scale.global.x holds horizontal scale factor
+    // ── Zoom (pinch) ────────────────────────────────────────────────────────
     final scaleX = info.scale.global.x;
-    if (scaleX != 0.0 && scaleX != 1.0) {
-      _currentZoom = (_currentZoom * scaleX).clamp(minZoom, maxZoom);
+    if (scaleX > 0.0 && scaleX != 1.0) {
+      final newZoom = (_zoomAtScaleStart * scaleX).clamp(minZoom, maxZoom);
+      _currentZoom = newZoom;
       camera.viewfinder.zoom = _currentZoom;
+
+      // Adjust camera position so the focal world point stays under the finger.
+      final viewportSize = camera.viewport.size;
+      camera.viewfinder.position = Vector2(
+        _focalWorldStart.x -
+            (currentFocal.x - viewportSize.x / 2) / _currentZoom,
+        _focalWorldStart.y -
+            (currentFocal.y - viewportSize.y / 2) / _currentZoom,
+      );
+    } else {
+      // ── Pan (single finger) ─────────────────────────────────────────────
+      final panDelta = currentFocal - _lastFocalPoint;
+      final worldDelta = panDelta / _currentZoom;
+      camera.viewfinder.position =
+          camera.viewfinder.position - worldDelta;
+
+      // Track velocity for momentum using actual elapsed time between events.
+      final nowUs = DateTime.now().microsecondsSinceEpoch;
+      final gestureDt =
+          ((nowUs - _lastScaleUpdateUs) / 1000000.0).clamp(0.001, 0.1);
+      _lastScaleUpdateUs = nowUs;
+      // Negative because camera moves opposite to the world delta.
+      _velocity = -worldDelta / gestureDt;
     }
+
+    _lastFocalPoint = currentFocal;
   }
 
   @override
-  void onScaleEnd(ScaleEndInfo info) {}
+  void onScaleEnd(ScaleEndInfo info) {
+    _gestureActive = false;
+    // Velocity is already set from the last onScaleUpdate; momentum kicks in.
+  }
 
   @override
   void onTapUp(TapUpEvent event) {

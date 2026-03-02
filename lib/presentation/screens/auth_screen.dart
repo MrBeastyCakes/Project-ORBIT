@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_provider.dart';
 import '../../core/constants/theme_constants.dart';
-import 'galaxy_screen.dart';
 
 class AuthScreen extends ConsumerWidget {
   const AuthScreen({super.key});
@@ -11,15 +10,6 @@ class AuthScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authProvider);
-
-    // Navigate to GalaxyScreen once authenticated
-    ref.listen<AuthState>(authProvider, (previous, next) {
-      if (next.isAuthenticated && context.mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute<void>(builder: (_) => const GalaxyScreen()),
-        );
-      }
-    });
 
     return Scaffold(
       backgroundColor: ThemeConstants.backgroundColor,
@@ -74,7 +64,7 @@ class AuthScreen extends ConsumerWidget {
                   const SizedBox(height: 16),
                 ],
 
-                // Sign-in button
+                // Google Sign-in button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -88,8 +78,7 @@ class AuthScreen extends ConsumerWidget {
                     ),
                     onPressed: authState.isLoading
                         ? null
-                        : () =>
-                            ref.read(authProvider.notifier).signIn(),
+                        : () => ref.read(authProvider.notifier).signIn(),
                     icon: authState.isLoading
                         ? const SizedBox(
                             width: 18,
@@ -101,9 +90,7 @@ class AuthScreen extends ConsumerWidget {
                           )
                         : const Icon(Icons.login, size: 20),
                     label: Text(
-                      authState.isLoading
-                          ? 'Signing in...'
-                          : 'Sign in with Google',
+                      authState.isLoading ? 'Signing in...' : 'Sign in with Google',
                     ),
                   ),
                 ),
@@ -120,16 +107,8 @@ class AuthScreen extends ConsumerWidget {
                     ),
                     onPressed: authState.isLoading
                         ? null
-                        : () {
-                            ref
-                                .read(authProvider.notifier)
-                                .continueLocally();
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute<void>(
-                                builder: (_) => const GalaxyScreen(),
-                              ),
-                            );
-                          },
+                        : () =>
+                            ref.read(authProvider.notifier).continueLocally(),
                     child: const Text('Continue without account'),
                   ),
                 ),

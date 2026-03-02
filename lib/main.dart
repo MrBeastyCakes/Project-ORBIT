@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import 'app.dart';
 import 'data/models/black_hole_model.dart';
@@ -23,10 +24,23 @@ void main() async {
 
   try {
     await _initHive();
+    // Firebase init is optional — app runs in local-only mode if Firebase
+    // is not configured (no google-services.json / GoogleService-Info.plist).
+    await _tryInitFirebase();
     runApp(const ProviderScope(child: OrbitApp()));
   } catch (e) {
     // Hive or other critical init failure -- show error screen.
     runApp(_ErrorApp(error: e.toString()));
+  }
+}
+
+/// Attempts to initialise Firebase. Silently swallows errors so the app
+/// can still run in local-only mode when Firebase config files are absent.
+Future<void> _tryInitFirebase() async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    // Firebase not configured — local-only mode.
   }
 }
 

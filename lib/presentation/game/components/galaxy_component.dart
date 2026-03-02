@@ -1,7 +1,7 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flame/components.dart';
-import 'package:flame/game.dart';
 import 'package:orbit_app/domain/entities/asteroid.dart';
 import 'package:orbit_app/domain/entities/black_hole.dart';
 import 'package:orbit_app/domain/entities/constellation_link.dart';
@@ -18,11 +18,12 @@ import 'package:orbit_app/presentation/game/components/planet_component.dart';
 import 'package:orbit_app/presentation/game/components/star_component.dart';
 import 'package:orbit_app/presentation/game/components/wormhole_component.dart';
 import 'package:orbit_app/presentation/game/effects/supernova_effect.dart';
+import 'package:orbit_app/presentation/game/orbit_game.dart';
 
 /// Level-of-detail tier determined by current camera zoom.
 enum LodLevel { galaxy, system, planet }
 
-class GalaxyComponent extends Component with HasGameReference<FlameGame> {
+class GalaxyComponent extends Component with HasGameReference<OrbitGame> {
   final Map<String, BlackHoleComponent> _blackHoles = {};
   final Map<String, StarComponent> _stars = {};
   final Map<String, PlanetComponent> _planets = {};
@@ -123,9 +124,29 @@ class GalaxyComponent extends Component with HasGameReference<FlameGame> {
     final component = BlackHoleComponent(entity: entity);
     _blackHoles[entity.id] = component;
     await add(component);
+
+    // Black holes are static anchors: they exert gravity but never move from it.
+    game.gravitySystem.register(
+      id: entity.id,
+      mass: entity.mass,
+      getBasePosition: () => component.position,
+      updatePosition: (x, y) {}, // Black holes don't move from gravity.
+    );
   }
 
   void removeBlackHole(String id) {
+    // Unregister all stars that belong to this black hole from orbit system.
+    final orbitSystem = game.orbitSystem;
+    final starIdsToRemove = _stars.entries
+        .where((e) => e.value.entity.parentBlackHoleId == id)
+        .map((e) => e.key)
+        .toList();
+    for (final starId in starIdsToRemove) {
+      orbitSystem.unregister(starId);
+      game.gravitySystem.unregister(starId);
+    }
+
+    game.gravitySystem.unregister(id);
     final component = _blackHoles.remove(id);
     component?.removeFromParent();
   }
@@ -135,11 +156,56 @@ class GalaxyComponent extends Component with HasGameReference<FlameGame> {
   Future<void> addStar(Star entity) async {
     if (_stars.containsKey(entity.id)) return;
     final component = StarComponent(entity: entity);
+
+    // If entity x,y are at origin, compute from live parent position + orbit.
+    if (entity.x == 0 && entity.y == 0 && entity.orbitRadius > 0) {
+      final parentBh = _blackHoles[entity.parentBlackHoleId];
+      if (parentBh != null) {
+        final rad = entity.orbitAngle * math.pi / 180.0;
+        component.position = Vector2(
+          parentBh.position.x + entity.orbitRadius * math.cos(rad),
+          parentBh.position.y + entity.orbitRadius * math.sin(rad),
+        );
+      }
+    }
+
     _stars[entity.id] = component;
     await add(component);
+
+    final orbitSystem = game.orbitSystem;
+    orbitSystem.registerStar(
+      component: component,
+      id: entity.id,
+      orbitRadius: entity.orbitRadius,
+      getParentPosition: () =>
+          _blackHoles[entity.parentBlackHoleId]?.position ?? Vector2.zero(),
+      initialAngle: entity.orbitAngle,
+    );
+
+    orbitSystem.setGravityManaged(entity.id);
+    game.gravitySystem.register(
+      id: entity.id,
+      mass: entity.mass,
+      getBasePosition: () =>
+          orbitSystem.basePositions[entity.id] ?? component.position,
+      updatePosition: (x, y) => component.position = Vector2(x, y),
+    );
   }
 
   void removeStar(String id) {
+    final orbitSystem = game.orbitSystem;
+    // Unregister this star and its child planets from orbit system.
+    orbitSystem.unregister(id);
+    game.gravitySystem.unregister(id);
+    final planetIdsToRemove = _planets.entries
+        .where((e) => e.value.entity.parentStarId == id)
+        .map((e) => e.key)
+        .toList();
+    for (final planetId in planetIdsToRemove) {
+      orbitSystem.unregister(planetId);
+      game.gravitySystem.unregister(planetId);
+    }
+
     final component = _stars.remove(id);
     component?.removeFromParent();
   }
@@ -149,12 +215,46 @@ class GalaxyComponent extends Component with HasGameReference<FlameGame> {
   Future<void> addPlanet(Planet entity) async {
     if (_planets.containsKey(entity.id)) return;
     final component = PlanetComponent(entity: entity);
+
+    // If entity x,y are at origin, compute from live parent position + orbit.
+    if (entity.x == 0 && entity.y == 0 && entity.orbitRadius > 0) {
+      final parentStar = _stars[entity.parentStarId];
+      if (parentStar != null) {
+        final rad = entity.orbitAngle * math.pi / 180.0;
+        component.position = Vector2(
+          parentStar.position.x + entity.orbitRadius * math.cos(rad),
+          parentStar.position.y + entity.orbitRadius * math.sin(rad),
+        );
+      }
+    }
+
     _planets[entity.id] = component;
     await add(component);
+
+    final orbitSystem = game.orbitSystem;
+    orbitSystem.registerPlanet(
+      component: component,
+      id: entity.id,
+      orbitRadius: entity.orbitRadius,
+      getParentPosition: () =>
+          _stars[entity.parentStarId]?.position ?? Vector2.zero(),
+      initialAngle: entity.orbitAngle,
+    );
+
+    orbitSystem.setGravityManaged(entity.id);
+    game.gravitySystem.register(
+      id: entity.id,
+      mass: entity.mass,
+      getBasePosition: () =>
+          orbitSystem.basePositions[entity.id] ?? component.position,
+      updatePosition: (x, y) => component.position = Vector2(x, y),
+    );
   }
 
   /// Remove a planet with a supernova + nebula effect at its position.
   void removePlanet(String id) {
+    game.orbitSystem.unregister(id);
+    game.gravitySystem.unregister(id);
     final component = _planets.remove(id);
     if (component == null) return;
     final pos = component.position.clone();
@@ -164,6 +264,8 @@ class GalaxyComponent extends Component with HasGameReference<FlameGame> {
 
   /// Remove a planet immediately without any visual effect (e.g. on reload).
   void removePlanetSilent(String id) {
+    game.orbitSystem.unregister(id);
+    game.gravitySystem.unregister(id);
     final component = _planets.remove(id);
     component?.removeFromParent();
   }
@@ -184,9 +286,20 @@ class GalaxyComponent extends Component with HasGameReference<FlameGame> {
     } else {
       await add(component);
     }
+
+    final orbitSystem = game.orbitSystem;
+    orbitSystem.registerMoon(
+      component: component,
+      id: entity.id,
+      orbitRadius: entity.orbitRadius,
+      getParentPosition: () =>
+          _planets[entity.parentPlanetId]?.position ?? Vector2.zero(),
+      initialAngle: entity.orbitAngle,
+    );
   }
 
   void removeMoon(String id) {
+    game.orbitSystem.unregister(id);
     final component = _moons.remove(id);
     component?.removeFromParent();
   }
@@ -315,6 +428,26 @@ class GalaxyComponent extends Component with HasGameReference<FlameGame> {
 
     add(supernova);
     add(coordinator);
+  }
+
+  // ── Camera framing ──────────────────────────────────────────────────────────
+
+  /// Collects positions of all loaded bodies and tells the camera to frame them.
+  void frameAll() {
+    final positions = <Vector2>[];
+    for (final bh in _blackHoles.values) {
+      positions.add(bh.position.clone());
+    }
+    for (final star in _stars.values) {
+      positions.add(star.position.clone());
+    }
+    for (final planet in _planets.values) {
+      positions.add(planet.position.clone());
+    }
+    if (positions.isEmpty) return;
+
+    final viewportSize = game.camera.viewport.size;
+    game.cameraSystem.frameAllBodies(positions, viewportSize);
   }
 
   // ── Accessors ───────────────────────────────────────────────────────────────

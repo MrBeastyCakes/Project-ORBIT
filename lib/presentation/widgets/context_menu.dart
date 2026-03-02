@@ -85,6 +85,7 @@ class ContextMenu extends StatelessWidget {
             ContextMenuAction.createWormhole,
             Icons.compare_arrows,
             'Create Wormhole',
+            isDisabled: true,
           ),
           _MenuEntry(ContextMenuAction.rename, Icons.edit_outlined, 'Rename'),
           _MenuEntry(
@@ -139,18 +140,20 @@ class ContextMenu extends StatelessWidget {
           children: _entries.map((entry) {
             final isChangeColor =
                 entry.action == ContextMenuAction.changeColor;
-            final itemColor = entry.isDestructive
-                ? Colors.redAccent
-                : ThemeConstants.starColor;
+            final itemColor = entry.isDisabled
+                ? Colors.white24
+                : entry.isDestructive
+                    ? Colors.redAccent
+                    : ThemeConstants.starColor;
             return InkWell(
-              onTap: () => onAction(entry.action),
+              onTap: entry.isDisabled ? null : () => onAction(entry.action),
               borderRadius: BorderRadius.circular(12),
               child: Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(
                   children: [
-                    if (isChangeColor && currentColor != null)
+                    if (isChangeColor && currentColor != null && !entry.isDisabled)
                       Container(
                         width: 18,
                         height: 18,
@@ -186,11 +189,13 @@ class _MenuEntry {
   final IconData icon;
   final String label;
   final bool isDestructive;
+  final bool isDisabled;
 
   const _MenuEntry(
     this.action,
     this.icon,
     this.label, {
     this.isDestructive = false,
+    this.isDisabled = false,
   });
 }

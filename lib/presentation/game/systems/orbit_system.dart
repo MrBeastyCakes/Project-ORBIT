@@ -22,12 +22,31 @@ class OrbitSystem extends Component with HasGameReference<FlameGame> {
   /// Registered orbital bodies.
   final List<_OrbitalEntry> _entries = [];
 
+  /// Base positions calculated by orbit (before gravity perturbation).
+  final Map<String, Vector2> basePositions = {};
+
+  /// IDs of bodies whose final position is managed by the gravity system.
+  final Set<String> _gravityManaged = {};
+
+  /// IDs of bodies whose orbit rotation is paused (touch-held).
+  final Set<String> _paused = {};
+
+  /// Pause orbit rotation for a body (e.g. while touch-held).
+  void pause(String id) => _paused.add(id);
+
+  /// Resume orbit rotation for a body.
+  void resume(String id) => _paused.remove(id);
+
+  /// Mark a body as gravity-managed (orbit calculates base, gravity sets final pos).
+  void setGravityManaged(String id) => _gravityManaged.add(id);
+
+  void clearGravityManaged(String id) => _gravityManaged.remove(id);
+
   void registerStar({
     required StarComponent component,
     required String id,
     required double orbitRadius,
-    required double parentX,
-    required double parentY,
+    required Vector2 Function() getParentPosition,
     double initialAngle = 0.0,
   }) {
     _angles[id] = initialAngle;
@@ -35,8 +54,7 @@ class OrbitSystem extends Component with HasGameReference<FlameGame> {
     _entries.add(_OrbitalEntry(
       id: id,
       orbitRadius: orbitRadius,
-      parentX: parentX,
-      parentY: parentY,
+      getParentPosition: getParentPosition,
       updatePosition: (x, y) => component.position = Vector2(x, y),
     ));
   }
@@ -45,8 +63,7 @@ class OrbitSystem extends Component with HasGameReference<FlameGame> {
     required PlanetComponent component,
     required String id,
     required double orbitRadius,
-    required double parentX,
-    required double parentY,
+    required Vector2 Function() getParentPosition,
     double initialAngle = 0.0,
   }) {
     _angles[id] = initialAngle;
@@ -54,8 +71,7 @@ class OrbitSystem extends Component with HasGameReference<FlameGame> {
     _entries.add(_OrbitalEntry(
       id: id,
       orbitRadius: orbitRadius,
-      parentX: parentX,
-      parentY: parentY,
+      getParentPosition: getParentPosition,
       updatePosition: (x, y) => component.position = Vector2(x, y),
     ));
   }
@@ -64,8 +80,7 @@ class OrbitSystem extends Component with HasGameReference<FlameGame> {
     required MoonComponent component,
     required String id,
     required double orbitRadius,
-    required double parentX,
-    required double parentY,
+    required Vector2 Function() getParentPosition,
     double initialAngle = 0.0,
   }) {
     _angles[id] = initialAngle;
@@ -73,15 +88,27 @@ class OrbitSystem extends Component with HasGameReference<FlameGame> {
     _entries.add(_OrbitalEntry(
       id: id,
       orbitRadius: orbitRadius,
-      parentX: parentX,
-      parentY: parentY,
+      getParentPosition: getParentPosition,
       updatePosition: (x, y) => component.position = Vector2(x, y),
     ));
+  }
+
+  /// Update the orbit radius for a registered body (e.g. after drag-to-resize).
+  void updateOrbitRadius(String id, double newRadius) {
+    for (final entry in _entries) {
+      if (entry.id == id) {
+        entry.orbitRadius = newRadius;
+        return;
+      }
+    }
   }
 
   void unregister(String id) {
     _angles.remove(id);
     _entries.removeWhere((e) => e.id == id);
+    basePositions.remove(id);
+    _gravityManaged.remove(id);
+    _paused.remove(id);
   }
 
   double _orbitSpeed(double orbitRadius) {
@@ -109,35 +136,42 @@ class OrbitSystem extends Component with HasGameReference<FlameGame> {
   void update(double dt) {
     final rect = _visibleRect();
     for (final entry in _entries) {
+      final parentPos = entry.getParentPosition();
       // Skip orbit updates for bodies whose parent center is far off-screen.
       // The parent position + orbitRadius defines the furthest possible location.
       if (!rect.inflate(entry.orbitRadius).contains(
-            Offset(entry.parentX, entry.parentY),
+            Offset(parentPos.x, parentPos.y),
           )) {
         continue;
       }
-      final speed = _orbitSpeed(entry.orbitRadius);
-      _angles[entry.id] = (_angles[entry.id]! + speed * dt) % 360.0;
+      // Skip angle advancement if paused (touch-held).
+      if (!_paused.contains(entry.id)) {
+        final speed = _orbitSpeed(entry.orbitRadius);
+        _angles[entry.id] = (_angles[entry.id]! + speed * dt) % 360.0;
+      }
       final rad = _angles[entry.id]! * math.pi / 180.0;
-      final x = entry.parentX + entry.orbitRadius * math.cos(rad);
-      final y = entry.parentY + entry.orbitRadius * math.sin(rad);
-      entry.updatePosition(x, y);
+      final x = parentPos.x + entry.orbitRadius * math.cos(rad);
+      final y = parentPos.y + entry.orbitRadius * math.sin(rad);
+      // Store base position for gravity system to read.
+      basePositions[entry.id] = Vector2(x, y);
+      // Only set component position if NOT gravity-managed.
+      if (!_gravityManaged.contains(entry.id)) {
+        entry.updatePosition(x, y);
+      }
     }
   }
 }
 
 class _OrbitalEntry {
   final String id;
-  final double orbitRadius;
-  final double parentX;
-  final double parentY;
+  double orbitRadius;
+  final Vector2 Function() getParentPosition;
   final void Function(double x, double y) updatePosition;
 
-  const _OrbitalEntry({
+  _OrbitalEntry({
     required this.id,
     required this.orbitRadius,
-    required this.parentX,
-    required this.parentY,
+    required this.getParentPosition,
     required this.updatePosition,
   });
 }

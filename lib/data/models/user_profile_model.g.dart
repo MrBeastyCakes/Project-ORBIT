@@ -21,7 +21,7 @@ class UserProfileModelAdapter extends TypeAdapter<UserProfileModel> {
       email: fields[1] as String,
       displayName: fields[2] as String,
       photoUrl: fields[3] as String?,
-      tier: fields[4] as int,
+      tier: fields[4] as String,
       createdAt: fields[5] as DateTime,
     );
   }
